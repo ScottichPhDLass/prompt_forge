@@ -1,0 +1,86 @@
+# prompt_forge configuration
+# All values can be overridden by CLI flags.
+
+[llm]
+# Which backend to talk to. Choices: "ollama", "lmstudio", or "auto".
+# "auto" probes 127.0.0.1:11434 (Ollama) then 127.0.0.1:1234 (LM Studio)
+# and uses whichever responds first. Set explicitly if you run both.
+provider = "auto"
+
+# Server URL. Leave empty to use the provider's default
+# (http://127.0.0.1:11434 for Ollama, http://127.0.0.1:1234 for LM Studio).
+host = ""
+
+# Model identifier as known to your provider:
+#   - Ollama: the tag from `ollama list`, e.g. "qwen2.5:32b-instruct"
+#   - LM Studio: the model id from "My Models", e.g. "qwen3-vl-4b-instruct"
+model = "qwen2.5:32b-instruct"
+
+# Per-call request timeout in seconds. The boilerplate-extractor pass sends
+# every rewritten prompt in a set in a single call, so this needs real headroom
+# on smaller/slower models. Recommended:
+#   - 240  for 7-13B on GPU
+#   - 360  for 30B+ on GPU
+#   - 480+ for 4B on iGPU/CPU, or any reasoning model
+timeout_s = 480
+
+# Sampling. Low temperature keeps style consistent across the deck.
+temperature = 0.4
+top_p = 0.9
+
+# Hard cap on output tokens per call.
+# Maps to Ollama's `num_predict` and LM Studio's `max_tokens`.
+# IMPORTANT: reasoning models (Nemotron-3, DeepSeek-R1, QwQ, gpt-oss, etc.)
+# need enough budget to finish their internal `thinking` block AND emit
+# visible content. Set to 4096+ for reasoning models. 1200 is plenty for
+# standard instruct models.
+num_predict = 1200
+
+# Max retries on JSON parse failures and provider errors. Timeouts are NOT
+# retried (the model is still running and retrying just stacks requests).
+max_retries = 3
+
+# Parallel rewrite workers. Most local providers serve a single request at a
+# time, so 1-2 is typical. Increase if your server has `num_parallel` > 1.
+concurrency = 2
+
+# LM Studio API key. The built-in OpenAI-compatible server doesn't validate
+# the value but does require the Authorization header. Any string works.
+api_key = "lm-studio"
+
+# Reasoning-model budget knob. Honored by LM Studio (and Ollama, on supported
+# models). Choices: "low", "medium", "high", or "" to leave it server-default.
+#
+# For prompt_forge specifically you almost always want "low":
+#   - We ask for crisp structured JSON output, not multi-step problem solving.
+#   - With "medium"/"high", reasoning models like Nemotron-3-Super, DeepSeek-R1,
+#     QwQ, or gpt-oss can burn the entire token budget on hidden reasoning
+#     and return empty `content`. The connectivity test will detect this and
+#     point you back here.
+#   - On non-reasoning models the field is ignored.
+reasoning_effort = "low"
+
+[pipeline]
+# Diffusion model family to target. "flux" emits long-form prose for
+# T5-encoder models (FLUX.1, FLUX.2, Qwen-Image, Z-Image). "sdxl" emits
+# CLIP-friendly tag objects with weights and BREAK chunking for Stable
+# Diffusion XL and its derivatives (Illustrious, Pony, JuggernautXL,
+# RealVisXL, etc.). When set to "sdxl", output is written to
+# '<input_stem>.sdxl.json' next to the input file unless --output is
+# given on the command line. Override per-run with --target.
+target = "flux"
+# Where to write per-prompt checkpoints. Resumable across runs.
+# IMPORTANT: a checkpoint produced for one target cannot be reused for
+# the other. Either delete the checkpoint dir or use a separate one
+# per target (e.g. .forge_cache_flux / .forge_cache_sdxl).
+checkpoint_dir = ".forge_cache"
+# After all prompts in a set are rewritten, recompute set boilerplate and
+# strip those terms from each prompt.
+recompute_boilerplate = true
+# Run the structural validator after each prompt is rewritten. Failures
+# trigger one repair pass before accepting the result.
+validate = true
+# Output style for the positive opening phrase (FLUX target only).
+opening_template = "realistic photographic {shot_type} of"
+# Always emit full-color imagery.
+force_full_color = true

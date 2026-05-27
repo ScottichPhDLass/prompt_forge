@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Film Stock Prompt Forge</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #2b333d;
+    --fg: #e6edf3;
+    --muted: #9aa6b2;
+    --accent: #f0a000;
+    --accent-2: #6cb6ff;
+    --ok: #4ade80;
+    --warn: #facc15;
+    --err: #f87171;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #1a212a 0%, #12171e 100%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  header h1 span.dim { color: var(--muted); font-weight: 400; }
+  header .ver { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header .config-path { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(420px, 1fr) minmax(420px, 1.2fr);
+    gap: 16px;
+    padding: 16px;
+    height: calc(100vh - 56px);
+  }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; height: auto; }
+  }
+
+  .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .card.collapsible h2 { cursor: pointer; user-select: none; }
+  .card.collapsible h2::before {
+    content: "▾";
+    display: inline-block;
+    width: 14px;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .card.collapsible.collapsed h2::before { transform: rotate(-90deg); }
+  .card.collapsible.collapsed .body { display: none; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+  }
+  .grid.full { grid-template-columns: 1fr; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field.span2 { grid-column: span 2; }
+  .field label {
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .field label .hint { font-size: 11px; color: var(--muted); opacity: 0.7; font-weight: normal; }
+
+  input[type=text], input[type=number], select, textarea {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 7px 9px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 100%;
+    min-width: 0;
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent-2);
+  }
+  input[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > input { flex: 1; }
+
+  button {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  button:hover:not([disabled]) { border-color: var(--accent-2); }
+  button[disabled] { opacity: 0.4; cursor: not-allowed; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a1410;
+    font-weight: 600;
+  }
+  button.primary:hover:not([disabled]) { background: #ffb733; border-color: #ffb733; }
+  button.danger { color: var(--err); }
+  button.danger:hover:not([disabled]) { border-color: var(--err); }
+
+  .checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 6px 0; }
+  .checkbox input { accent-color: var(--accent); }
+
+  .radio-group { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+  .radio-group label {
+    flex: 1;
+    text-align: center;
+    padding: 7px 10px;
+    cursor: pointer;
+    background: var(--panel-2);
+    transition: background 0.1s;
+    font-size: 13px;
+  }
+  .radio-group label:not(:last-child) { border-right: 1px solid var(--border); }
+  .radio-group input { display: none; }
+  .radio-group input:checked + span { color: var(--accent); font-weight: 600; }
+  .radio-group label:has(input:checked) { background: #232c37; }
+
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .toolbar .grow { flex: 1; }
+  .status {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .status.ok { color: var(--ok); }
+  .status.warn { color: var(--warn); }
+  .status.err { color: var(--err); }
+  .status.run { color: var(--accent); }
+
+  .log-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .log-card .body { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
+  .progress {
+    height: 6px;
+    background: var(--panel-2);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .progress > div {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #ffb733);
+    transition: width 0.2s;
+    width: 0%;
+  }
+  .log {
+    flex: 1;
+    overflow: auto;
+    background: #0a0d12;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #c4cdd6;
+    min-height: 240px;
+  }
+  .log .line { padding: 0; }
+  .log .line.cmd { color: var(--accent); }
+  .log .line.warn { color: var(--warn); }
+  .log .line.err { color: var(--err); }
+  .log .line.meta { color: var(--accent-2); }
+
+  .toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+    z-index: 100;
+    max-width: 360px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--err); }
+  .toast.warn { border-color: var(--warn); }
+
+  details { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  details summary { cursor: pointer; }
+  details code { font-family: var(--mono); color: var(--fg); word-break: break-all; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><strong>Film Stock Prompt Forge</strong></h1>
+  <span class="ver" id="version-tag">v0.4</span>
+  <div class="spacer"></div>
+  <span class="config-path" id="config-path"></span>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: configuration -->
+  <div class="col">
+
+    <div class="card">
+      <h2>Files &amp; target</h2>
+      <div class="grid">
+        <div class="field span2">
+          <label>Input JSON <span class="hint">required</span></label>
+          <div class="row">
+            <input type="text" id="input" placeholder="/path/to/film_stock_prompt_v4.json">
+            <button type="button" id="browse-input" title="Browse">📁</button>
+          </div>
+        </div>
+
+        <div class="field span2">
+          <label>Output JSON
+            <span class="hint" id="output-hint">blank = &lt;input_stem&gt;.&lt;target&gt;.json</span>
+          </label>
+          <div class="row">
+            <input type="text" id="output" placeholder="auto: <input_stem>.flux.json">
+            <button type="button" id="output-default" title="Reset to default for current target">↺</button>
+          </div>
+        </div>
+
+        <div class="field span2">
+          <label>Target</label>
+          <div class="radio-group">
+            <label><input type="radio" name="target" value="flux"><span>FLUX</span></label>
+            <label><input type="radio" name="target" value="sdxl"><span>SDXL</span></label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Selection</h2>
+      <label class="checkbox">
+        <input type="checkbox" id="process_all">
+        <span>Process every deck and set (--all)</span>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="hide_completed">
+        <span>Hide completed decks and sets <span class="hint" id="hide-hint">based on the cache folder</span></span>
+      </label>
+      <div class="grid" id="selection-fields">
+        <div class="field">
+          <label>Deck <span class="hint" id="deck-hint">load an input file to populate</span></label>
+          <select id="deck">
+            <option value="">(set an input file first)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Set <span class="hint" id="set-hint">choose a deck first</span></label>
+          <select id="set_name">
+            <option value="">(choose a deck first)</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;align-items:center;gap:8px;">
+        <button type="button" id="build-from-cache" title="Write the current Output JSON using only what's already in the cache (no LLM calls).">📦 Build output from cache</button>
+        <span class="status hint" id="build-status">&nbsp;</span>
+      </div>
+    </div>
+
+    <div class="card collapsible" id="provider-card">
+      <h2>LLM provider</h2>
+      <div class="body">
+      <div class="grid">
+        <div class="field">
+          <label>Provider</label>
+          <select id="provider">
+            <option value="auto">auto (probe Ollama, then LM Studio)</option>
+            <option value="ollama">ollama</option>
+            <option value="lmstudio">lmstudio</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Host URL <span class="hint">blank = provider default</span></label>
+          <input type="text" id="host" placeholder="http://strixhalo.sparkylab.cc:1234">
+        </div>
+        <div class="field span2">
+          <label>Model
+            <span class="hint">
+              <button type="button" id="list-models" style="padding:2px 6px;font-size:11px;">List models</button>
+              <button type="button" id="test-conn" style="padding:2px 6px;font-size:11px;">Test connection</button>
+            </span>
+          </label>
+          <div class="row">
+            <input type="text" id="model" placeholder="e.g. hermes-4-70b" list="model-list">
+            <datalist id="model-list"></datalist>
+          </div>
+          <span class="status" id="conn-status">&nbsp;</span>
+        </div>
+        <div class="field">
+          <label>API key <span class="hint">LM Studio</span></label>
+          <input type="text" id="api_key" placeholder="lm-studio">
+        </div>
+        <div class="field">
+          <label>Reasoning effort <span class="hint">LM Studio reasoning models</span></label>
+          <select id="reasoning_effort">
+            <option value="">(none)</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <div class="card collapsible collapsed" id="advanced-card">
+      <h2>Advanced</h2>
+      <div class="body">
+        <div class="grid">
+          <div class="field">
+            <label>Timeout (sec)</label>
+            <input type="number" id="timeout_s" min="1" step="10">
+          </div>
+          <div class="field">
+            <label>Concurrency</label>
+            <input type="number" id="concurrency" min="1" step="1">
+          </div>
+          <div class="field">
+            <label>Temperature</label>
+            <input type="number" id="temperature" min="0" max="2" step="0.05">
+          </div>
+          <div class="field">
+            <label>Max output tokens (num_predict)</label>
+            <input type="number" id="num_predict" min="64" step="64">
+          </div>
+          <div class="field span2">
+            <label>Checkpoint dir</label>
+            <input type="text" id="checkpoint_dir" placeholder=".forge_cache">
+          </div>
+          <div class="field">
+            <label>Verbosity</label>
+            <select id="verbose">
+              <option value="0">warn</option>
+              <option value="1">info (-v)</option>
+              <option value="2">debug (-vv)</option>
+            </select>
+          </div>
+          <div class="field" style="justify-content:flex-end;">
+            <label class="checkbox" style="margin-top:18px;">
+              <input type="checkbox" id="dry_run">
+              <span>Dry run (list targets, no LLM calls)</span>
+            </label>
+          </div>
+          <div class="field">
+            <label class="checkbox">
+              <input type="checkbox" id="recompute_boilerplate">
+              <span>Recompute boilerplate</span>
+            </label>
+          </div>
+          <div class="field">
+            <label class="checkbox">
+              <input type="checkbox" id="validate">
+              <span>Validate output</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button type="button" id="save-cfg">Save config</button>
+      <button type="button" id="reset-cfg">Reset to defaults</button>
+      <span class="status" id="save-status">&nbsp;</span>
+      <div class="grow"></div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT: run / log -->
+  <div class="col">
+
+    <div class="toolbar">
+      <button type="button" class="primary" id="run-btn">▶ Run</button>
+      <button type="button" class="danger" id="cancel-btn" disabled>■ Cancel</button>
+      <span class="status" id="run-status">idle</span>
+      <div class="grow"></div>
+      <button type="button" id="copy-cmd" title="Copy equivalent CLI command">Copy command</button>
+      <button type="button" id="clear-log">Clear log</button>
+    </div>
+
+    <div class="card log-card">
+      <h2>Run log</h2>
+      <div class="body">
+        <div class="progress"><div id="progress-bar"></div></div>
+        <div class="log" id="log"></div>
+        <details>
+          <summary>Equivalent CLI command</summary>
+          <code id="cmd-preview">(no command yet)</code>
+        </details>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Hidden file picker dialog -->
+<dialog id="browse-dialog" style="background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:8px;width:560px;max-width:90vw;">
+  <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <strong>Browse</strong>
+      <input type="text" id="browse-path" style="flex:1;">
+      <button type="button" id="browse-go">Go</button>
+      <button type="button" id="browse-up">Up</button>
+      <button type="button" id="browse-close">Close</button>
+    </div>
+    <div id="browse-list" style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:5px;background:var(--panel-2);font-family:var(--mono);font-size:12px;"></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+
+// ---- helpers --------------------------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+const fields = [
+  "input", "output", "target", "process_all", "hide_completed", "deck", "set_name",
+  "provider", "host", "model", "api_key", "reasoning_effort",
+  "timeout_s", "temperature", "num_predict", "concurrency",
+  "checkpoint_dir", "recompute_boilerplate", "validate",
+  "dry_run", "verbose",
+];
+
+let DEFAULTS = null;
+let currentRun = null;
+let progress = { current: 0, total: 0, startedAt: 0, lastTickAt: 0, completedSinceStart: 0 };
+let INPUT_TREE = null;        // last loaded {decks: [{value,label,sets:[{value,label,prompt_count}]}]}
+let inputLoadToken = 0;       // ignore stale responses if user types quickly
+let pendingDeck = null;       // value to restore from saved config when tree finishes loading
+let pendingSet = null;
+let CACHE_STATUS = null;      // last /api/cache-status response, used to filter dropdowns
+let cacheLoadToken = 0;
+
+function toast(msg, kind = "ok", ms = 2500) {
+  const t = $("toast");
+  t.className = "toast show " + kind;
+  t.textContent = msg;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.className = "toast"; }, ms);
+}
+
+function setVal(id, v) {
+  const el = $(id);
+  if (!el) return;
+  if (el.type === "checkbox") el.checked = !!v;
+  else el.value = (v == null) ? "" : String(v);
+}
+
+function setSelectValue(id, v) {
+  // Set a <select> value if the option exists; otherwise leave it alone so a
+  // not-yet-populated dropdown can be filled in later by loadInputStructure().
+  const el = $(id);
+  if (!el) return false;
+  const has = Array.from(el.options).some(o => o.value === v);
+  if (has) { el.value = v; return true; }
+  return false;
+}
+
+function getVal(id) {
+  const el = $(id);
+  if (!el) return null;
+  if (el.type === "checkbox") return el.checked;
+  if (el.type === "number") {
+    if (el.value === "") return null;
+    return el.step && el.step.includes(".") ? parseFloat(el.value) : parseInt(el.value, 10);
+  }
+  return el.value;
+}
+
+const SET_ALL = "__ALL__";
+
+function readConfig() {
+  const cfg = {};
+  for (const f of fields) {
+    if (f === "target") cfg[f] = document.querySelector('input[name=target]:checked').value;
+    else cfg[f] = getVal(f);
+  }
+  return cfg;
+}
+
+function applyConfig(cfg) {
+  for (const f of fields) {
+    if (f === "target") {
+      const v = cfg.target || "flux";
+      const r = document.querySelector(`input[name=target][value="${v}"]`);
+      if (r) r.checked = true;
+    } else if (f === "deck" || f === "set_name") {
+      // Defer: dropdowns may be empty until /api/inspect-input completes.
+      // Stash the saved value and try to apply it once the tree loads.
+      if (f === "deck") pendingDeck = cfg[f] || "";
+      else pendingSet = cfg[f] || "";
+    } else {
+      setVal(f, cfg[f]);
+    }
+  }
+  refreshDerived();
+  // Kick off the input-tree load so the dropdowns get populated.
+  loadInputStructure((cfg.input || "").trim());
+}
+
+function refreshDerived() {
+  // Selection enable/disable
+  const all = $("process_all").checked;
+  $("deck").disabled = all;
+  $("set_name").disabled = all;
+
+  // Output hint + placeholder — same behavior for both targets now.
+  const tgt = document.querySelector('input[name=target]:checked').value;
+  const inp = $("input").value.trim();
+  const out = $("output");
+  $("output-hint").textContent = `blank = <input_stem>.${tgt}.json`;
+  if (inp) {
+    const stem = inp.replace(/\.[^./\\]+$/, "");
+    out.placeholder = `${stem}.${tgt}.json`;
+  } else {
+    out.placeholder = `<input_stem>.${tgt}.json`;
+  }
+
+  $("api_key").parentElement.style.opacity = ($("provider").value === "lmstudio") ? "1" : "0.5";
+
+  // Live command preview
+  $("cmd-preview").textContent = previewCommand();
+}
+
+function previewCommand() {
+  const cfg = readConfig();
+  const argv = ["python", "-m", "prompt_forge"];
+  const inp = (cfg.input || "").trim();
+  if (!inp) return "(set an input file to preview command)";
+  argv.push("--input", quote(inp));
+  if (cfg.output) argv.push("--output", quote(cfg.output));
+  argv.push("--target", cfg.target);
+  if (cfg.process_all) argv.push("--all");
+  else if (cfg.deck) {
+    argv.push("--deck", quote(cfg.deck));
+    if (cfg.set_name && cfg.set_name !== SET_ALL) {
+      argv.push("--set", quote(cfg.set_name));
+    }
+  }
+  argv.push("--provider", cfg.provider);
+  if (cfg.host) argv.push("--host", quote(cfg.host));
+  if (cfg.model) argv.push("--model", quote(cfg.model));
+  if (cfg.provider === "lmstudio" && cfg.api_key) argv.push("--api-key", quote(cfg.api_key));
+  if (cfg.reasoning_effort) argv.push("--reasoning-effort", cfg.reasoning_effort);
+  if (cfg.timeout_s) argv.push("--timeout", cfg.timeout_s);
+  if (cfg.temperature != null && cfg.temperature !== "") argv.push("--temperature", cfg.temperature);
+  if (cfg.num_predict) argv.push("--num-predict", cfg.num_predict);
+  if (cfg.concurrency) argv.push("--concurrency", cfg.concurrency);
+  if (cfg.checkpoint_dir) argv.push("--checkpoint-dir", quote(cfg.checkpoint_dir));
+  if (cfg.recompute_boilerplate === false) argv.push("--no-recompute-boilerplate");
+  if (cfg.validate === false) argv.push("--no-validate");
+  if (cfg.dry_run) argv.push("--dry-run");
+  if (cfg.verbose >= 2) argv.push("-vv");
+  else if (cfg.verbose == 1) argv.push("-v");
+  return argv.join(" ");
+}
+
+function quote(s) {
+  if (typeof s !== "string") return String(s);
+  return /[\s"'$`\\]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+// ---- log + progress -------------------------------------------------------
+
+function appendLog(line, klass) {
+  const el = document.createElement("div");
+  el.className = "line" + (klass ? " " + klass : "");
+  el.textContent = line;
+  const box = $("log");
+  const atBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+  box.appendChild(el);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  parseProgress(line);
+}
+
+function parseProgress(line) {
+  // Matches "  [3/50] done" or "Rewriting 50/50 prompts"
+  let m = line.match(/\[(\d+)\/(\d+)\]/);
+  if (m) {
+    const prev = progress.current;
+    progress.current = parseInt(m[1], 10);
+    progress.total = parseInt(m[2], 10);
+    // First prompt of this run? Anchor the ETA clock to *now*. We anchor on the
+    // first completion (rather than Run-button-click) so the average isn't
+    // skewed by model-load / cold-start latency, and so resumed runs that skip
+    // already-cached prompts measure only fresh work.
+    const now = Date.now();
+    if (progress.startedAt === 0 && progress.current > prev) {
+      progress.startedAt = now;
+      progress.completedSinceStart = 0;
+    } else if (progress.current > prev) {
+      progress.completedSinceStart += (progress.current - prev);
+    }
+    progress.lastTickAt = now;
+    updateProgressBar();
+    updateRunStats();
+    return;
+  }
+  m = line.match(/Rewriting\s+\d+\/(\d+)\s+prompts/);
+  if (m) {
+    progress.total = parseInt(m[1], 10);
+    progress.current = 0;
+    updateProgressBar();
+  }
+}
+
+function _fmtMMSS(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return "--:--";
+  const s = Math.round(seconds);
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return String(mm).padStart(2, "0") + ":" + String(ss).padStart(2, "0");
+}
+
+function _fmtHHMMSS(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return "--:--:--";
+  const s = Math.round(seconds);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return String(hh).padStart(2, "0") + ":"
+       + String(mm).padStart(2, "0") + ":"
+       + String(ss).padStart(2, "0");
+}
+
+// Update the run-status label with rolling avg-per-prompt and ETA. Called
+// after every progress tick once at least one prompt has finished.
+function updateRunStats() {
+  if (!currentRun) return;  // run already ended (done event fired)
+  if (progress.startedAt === 0 || progress.completedSinceStart < 1) return;
+  const elapsedMs = (progress.lastTickAt || Date.now()) - progress.startedAt;
+  const avgMs = elapsedMs / progress.completedSinceStart;
+  const remaining = Math.max(0, progress.total - progress.current);
+  const etaMs = avgMs * remaining;
+  const label = `Avg. Prompt: ${_fmtMMSS(avgMs / 1000)} | Est. Complete: ${_fmtHHMMSS(etaMs / 1000)}`;
+  setRunUI(true, label);
+}
+
+function updateProgressBar() {
+  const pct = progress.total > 0 ? Math.min(100, (progress.current / progress.total) * 100) : 0;
+  $("progress-bar").style.width = pct + "%";
+}
+
+function classifyLine(line) {
+  if (line.startsWith("$ ")) return "cmd";
+  if (line.startsWith("[") && line.includes("error")) return "err";
+  const lower = line.toLowerCase();
+  if (lower.includes(" error") || lower.includes("traceback")) return "err";
+  if (lower.includes(" warn")) return "warn";
+  if (lower.startsWith("wrote ") || lower.startsWith("[cancel")) return "meta";
+  return null;
+}
+
+// ---- run lifecycle --------------------------------------------------------
+
+async function startRun() {
+  // Validate
+  const cfg = readConfig();
+  if (!cfg.input.trim()) { toast("Input file is required", "err"); $("input").focus(); return; }
+  if (!cfg.process_all && !cfg.deck.trim()) {
+    toast("Pick a Deck (or enable Process all)", "err"); return;
+  }
+
+  // Clear log + progress (incl. timing anchors used for avg/ETA)
+  $("log").innerHTML = "";
+  progress = { current: 0, total: 0, startedAt: 0, lastTickAt: 0, completedSinceStart: 0 };
+  updateProgressBar();
+  setRunUI(true, "starting…");
+
+  let resp;
+  try {
+    resp = await api("/api/run", { method: "POST", body: JSON.stringify({ config: cfg }) });
+  } catch (e) {
+    setRunUI(false, "failed: " + e.message, "err");
+    toast(e.message, "err");
+    return;
+  }
+  currentRun = resp.run_id;
+  appendLog("$ " + resp.cmd.join(" "), "cmd");
+  for (const w of (resp.warnings || [])) appendLog("[warn] " + w, "warn");
+
+  // SSE stream
+  const es = new EventSource(`/api/runs/${currentRun}/stream`);
+  es.onmessage = (ev) => {
+    let line;
+    try { line = JSON.parse(ev.data); } catch { line = ev.data; }
+    appendLog(line, classifyLine(line));
+  };
+  es.addEventListener("done", (ev) => {
+    let info = {};
+    try { info = JSON.parse(ev.data); } catch { /* ignore */ }
+    es.close();
+    currentRun = null;
+    const ok = info.exit_code === 0;
+    const label = ok ? `done (exit 0)` : `${info.state || "ended"} (exit ${info.exit_code})`;
+    setRunUI(false, label, ok ? "ok" : "err");
+    toast(label, ok ? "ok" : "err");
+  });
+  es.onerror = () => {
+    // Browser auto-reconnects; if the run is gone the server returns 404 and we stop.
+    if (!currentRun) es.close();
+  };
+}
+
+async function cancelRun() {
+  if (!currentRun) return;
+  try {
+    await api(`/api/runs/${currentRun}/cancel`, { method: "POST" });
+    appendLog("[cancel sent]", "warn");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function setRunUI(running, status, kind) {
+  $("run-btn").disabled = running;
+  $("cancel-btn").disabled = !running;
+  const s = $("run-status");
+  s.textContent = status;
+  s.className = "status " + (kind || (running ? "run" : ""));
+}
+
+// ---- config save/load -----------------------------------------------------
+
+async function saveConfig() {
+  const cfg = readConfig();
+  try {
+    await api("/api/config", { method: "POST", body: JSON.stringify(cfg) });
+    $("save-status").textContent = "saved " + new Date().toLocaleTimeString();
+    $("save-status").className = "status ok";
+    toast("Config saved to ./config.json", "ok");
+  } catch (e) {
+    toast("Save failed: " + e.message, "err");
+  }
+}
+
+async function resetConfig() {
+  if (!confirm("Reset all fields to defaults? Saved config.json is untouched until you click Save.")) return;
+  applyConfig(DEFAULTS);
+  toast("Reset to defaults (not saved)", "warn");
+}
+
+async function loadInitial() {
+  try {
+    DEFAULTS = await api("/api/defaults");
+    const cfg = await api("/api/config");
+    applyConfig(cfg);
+  } catch (e) {
+    toast("Load failed: " + e.message, "err");
+  }
+}
+
+// ---- model listing & connection test --------------------------------------
+
+async function listModels() {
+  $("conn-status").textContent = "fetching models…";
+  $("conn-status").className = "status";
+  try {
+    const r = await api("/api/list-models", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: $("provider").value,
+        host: $("host").value.trim(),
+      }),
+    });
+    if (r.error) { $("conn-status").textContent = "error: " + r.error; $("conn-status").className = "status err"; return; }
+    const dl = $("model-list");
+    dl.innerHTML = "";
+    for (const m of (r.models || [])) {
+      const o = document.createElement("option");
+      o.value = m;
+      dl.appendChild(o);
+    }
+    $("conn-status").textContent = `${r.models.length} model(s) available at ${r.host}`;
+    $("conn-status").className = "status ok";
+  } catch (e) {
+    $("conn-status").textContent = "error: " + e.message;
+    $("conn-status").className = "status err";
+  }
+}
+
+async function testConnection() {
+  $("conn-status").textContent = "testing…";
+  $("conn-status").className = "status";
+  try {
+    const r = await api("/api/test-connection", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: $("provider").value,
+        host: $("host").value.trim(),
+        model: $("model").value.trim(),
+      }),
+    });
+    if (r.ok) {
+      $("conn-status").textContent = `connected to ${r.provider} at ${r.host} — ${r.models.length} model(s)`;
+      $("conn-status").className = "status ok";
+      const dl = $("model-list");
+      dl.innerHTML = "";
+      for (const m of (r.models || [])) {
+        const o = document.createElement("option");
+        o.value = m;
+        dl.appendChild(o);
+      }
+    } else {
+      $("conn-status").textContent = "no connection: " + (r.error || "ping failed");
+      $("conn-status").className = "status err";
+    }
+  } catch (e) {
+    $("conn-status").textContent = "error: " + e.message;
+    $("conn-status").className = "status err";
+  }
+}
+
+// ---- file browser ---------------------------------------------------------
+
+let browseTarget = null;
+async function openBrowse(targetField, startPath) {
+  browseTarget = targetField;
+  $("browse-dialog").showModal();
+  await loadBrowse(startPath || "");
+}
+
+async function loadBrowse(p) {
+  try {
+    const r = await api("/api/browse?path=" + encodeURIComponent(p));
+    $("browse-path").value = r.cwd;
+    const list = $("browse-list");
+    list.innerHTML = "";
+    for (const e of r.entries) {
+      const row = document.createElement("div");
+      row.style.padding = "5px 10px";
+      row.style.cursor = "pointer";
+      row.style.borderBottom = "1px solid var(--border)";
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.innerHTML = `<span style="color:var(--accent-2);width:14px;">${e.is_dir ? "📁" : "📄"}</span><span style="flex:1;">${e.name}</span>${e.size != null ? `<span style="color:var(--muted);">${(e.size/1024).toFixed(1)}KB</span>` : ""}`;
+      row.onmouseover = () => row.style.background = "#232c37";
+      row.onmouseout = () => row.style.background = "";
+      row.onclick = async () => {
+        if (e.is_dir) await loadBrowse(e.path);
+        else { selectBrowse(e.path); }
+      };
+      list.appendChild(row);
+    }
+    $("browse-list").dataset.parent = r.parent || "";
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function selectBrowse(path) {
+  if (browseTarget) {
+    $(browseTarget).value = path;
+    $(browseTarget).dispatchEvent(new Event("input"));
+  }
+  $("browse-dialog").close();
+}
+
+// ---- input structure (deck/set dropdowns) ---------------------------------
+
+async function loadInputStructure(path) {
+  const deckEl = $("deck");
+  const setEl = $("set_name");
+  const deckHint = $("deck-hint");
+  const setHint = $("set-hint");
+
+  if (!path) {
+    INPUT_TREE = null;
+    deckEl.innerHTML = '<option value="">(set an input file first)</option>';
+    setEl.innerHTML = '<option value="">(choose a deck first)</option>';
+    deckHint.textContent = "load an input file to populate";
+    setHint.textContent = "choose a deck first";
+    refreshDerived();
+    return;
+  }
+
+  const myToken = ++inputLoadToken;
+  deckHint.textContent = "loading…";
+  setHint.textContent = "";
+  try {
+    const [r, _] = await Promise.all([
+      api("/api/inspect-input?path=" + encodeURIComponent(path)),
+      loadCacheStatus(),
+    ]);
+    if (myToken !== inputLoadToken) return;  // stale
+    INPUT_TREE = r;
+    populateDeckDropdown();
+  } catch (e) {
+    if (myToken !== inputLoadToken) return;
+    INPUT_TREE = null;
+    deckEl.innerHTML = '<option value="">(could not read input)</option>';
+    setEl.innerHTML = '<option value="">(could not read input)</option>';
+    deckHint.textContent = "";
+    setHint.textContent = "";
+    $("deck-hint").textContent = e.message;
+  }
+  refreshDerived();
+}
+
+// Look up cache info for one deck (by deck_idx). Returns null if no cache data.
+function _cacheForDeck(deckIdx) {
+  if (!CACHE_STATUS || !CACHE_STATUS.decks) return null;
+  return CACHE_STATUS.decks.find(d => d.deck_idx === deckIdx) || null;
+}
+
+// Look up cache info for one set within a deck.
+function _cacheForSet(deckIdx, setIdx) {
+  const d = _cacheForDeck(deckIdx);
+  if (!d) return null;
+  return d.sets.find(s => s.set_idx === setIdx) || null;
+}
+
+// True iff the user wants to hide already-completed entries AND we have data.
+function _hideCompletedActive() {
+  return $("hide_completed").checked && !!CACHE_STATUS;
+}
+
+async function buildFromCache() {
+  const inputPath = $("input").value.trim();
+  if (!inputPath) { toast("Set an Input JSON file first", "err"); return; }
+  const target = (document.querySelector('input[name=target]:checked') || {}).value || "flux";
+  const body = {
+    input: inputPath,
+    output: $("output").value.trim(),
+    target,
+    checkpoint_dir: $("checkpoint_dir").value.trim(),
+  };
+  const btn = $("build-from-cache");
+  const status = $("build-status");
+  btn.disabled = true;
+  status.textContent = "building…";
+  try {
+    const r = await api("/api/build-from-cache", { method: "POST", body: JSON.stringify(body) });
+    const s = r.summary || {};
+    const msg = `wrote ${r.output} — ${s.sets_filled_from_cache}/${s.sets_total} set${s.sets_total === 1 ? "" : "s"} from cache`
+              + (s.sets_partial ? `, ${s.sets_partial} partial` : "")
+              + (s.sets_no_cache ? `, ${s.sets_no_cache} not yet processed` : "")
+              + (s.sets_target_mismatch ? `, ${s.sets_target_mismatch} target mismatch` : "");
+    status.textContent = msg;
+    toast(`Wrote ${r.output}`, "ok", 4000);
+    // Refresh cache state in case the user wants to keep iterating.
+    await loadCacheStatus();
+    if (INPUT_TREE && $("hide_completed").checked) populateDeckDropdown();
+  } catch (e) {
+    status.textContent = "";
+    toast(e.message || "build failed", "err", 5000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadCacheStatus() {
+  // Only meaningful when an input file is loaded. Re-run when input,
+  // checkpoint_dir, or target changes.
+  const inputPath = $("input").value.trim();
+  if (!inputPath) { CACHE_STATUS = null; return; }
+  const target = (document.querySelector('input[name=target]:checked') || {}).value || "flux";
+  const ck = $("checkpoint_dir").value.trim();
+  const myToken = ++cacheLoadToken;
+  try {
+    const url = "/api/cache-status?input=" + encodeURIComponent(inputPath)
+              + "&target=" + encodeURIComponent(target)
+              + "&checkpoint_dir=" + encodeURIComponent(ck);
+    const r = await api(url);
+    if (myToken !== cacheLoadToken) return;
+    CACHE_STATUS = r;
+  } catch (e) {
+    if (myToken !== cacheLoadToken) return;
+    CACHE_STATUS = null;
+  }
+}
+
+function populateDeckDropdown() {
+  const deckEl = $("deck");
+  const setEl = $("set_name");
+  const deckHint = $("deck-hint");
+  if (!INPUT_TREE || !INPUT_TREE.decks || INPUT_TREE.decks.length === 0) {
+    deckEl.innerHTML = '<option value="">(no decks found in file)</option>';
+    setEl.innerHTML = '<option value="">(no decks)</option>';
+    deckHint.textContent = "";
+    return;
+  }
+  // Build the visible list, filtering out completed decks if requested.
+  const hide = _hideCompletedActive();
+  const visible = INPUT_TREE.decks.map((d, idx) => {
+    const cd = _cacheForDeck(idx);
+    return { d, idx, cd };
+  }).filter(({ cd }) => !(hide && cd && cd.all_sets_complete));
+  deckEl.innerHTML = '<option value="">(choose a deck…)</option>';
+  for (const { d } of visible) {
+    const o = document.createElement("option");
+    o.value = d.value;
+    o.textContent = `${d.label} — ${d.set_count} set${d.set_count === 1 ? "" : "s"}`;
+    deckEl.appendChild(o);
+  }
+  const hiddenCount = INPUT_TREE.decks.length - visible.length;
+  deckHint.textContent = hide && hiddenCount
+    ? `${visible.length} of ${INPUT_TREE.decks.length} decks shown (${hiddenCount} hidden as completed)`
+    : `${INPUT_TREE.decks.length} deck${INPUT_TREE.decks.length === 1 ? "" : "s"} loaded`;
+
+  // Restore the saved-config deck. We match exactly against value first, then
+  // fall back to display_name / model_name, mirroring the CLI's tolerance.
+  if (pendingDeck) {
+    const wanted = pendingDeck.toLowerCase();
+    const hit = INPUT_TREE.decks.find(d =>
+      d.value.toLowerCase() === wanted ||
+      (d.display_name || "").toLowerCase() === wanted ||
+      (d.model_name || "").toLowerCase() === wanted
+    );
+    if (hit) deckEl.value = hit.value;
+    pendingDeck = null;
+  }
+  populateSetDropdown();
+}
+
+function populateSetDropdown() {
+  const deckEl = $("deck");
+  const setEl = $("set_name");
+  const setHint = $("set-hint");
+  if (!INPUT_TREE || !deckEl.value) {
+    setEl.innerHTML = '<option value="">(choose a deck first)</option>';
+    setHint.textContent = "choose a deck first";
+    return;
+  }
+  const deck = INPUT_TREE.decks.find(d => d.value === deckEl.value);
+  if (!deck) {
+    setEl.innerHTML = '<option value="">(deck not found)</option>';
+    setHint.textContent = "";
+    return;
+  }
+  setEl.innerHTML = "";
+  // Find this deck's index so we can correlate with cache status.
+  const deckIdx = INPUT_TREE.decks.indexOf(deck);
+  const hide = _hideCompletedActive();
+  // Filter the per-set list when the hide checkbox is on.
+  const visibleSets = deck.sets.filter((s, si) => {
+    if (!hide) return true;
+    const cs = _cacheForSet(deckIdx, si);
+    return !(cs && cs.all_prompts_written && cs.target_match);
+  });
+  // <All sets in this deck> is always first and auto-selected.
+  const allOpt = document.createElement("option");
+  allOpt.value = SET_ALL;
+  const totalPrompts = visibleSets.reduce((a, s) => a + (s.prompt_count || 0), 0);
+  allOpt.textContent = hide && visibleSets.length !== deck.sets.length
+    ? `<All ${visibleSets.length} remaining sets in this deck — ${totalPrompts} prompts>`
+    : `<All ${deck.sets.length} sets in this deck — ${totalPrompts} prompts>`;
+  setEl.appendChild(allOpt);
+  for (const s of visibleSets) {
+    const o = document.createElement("option");
+    o.value = s.value;
+    o.textContent = `${s.label} — ${s.prompt_count} prompt${s.prompt_count === 1 ? "" : "s"}`;
+    setEl.appendChild(o);
+  }
+  const hiddenSetCount = deck.sets.length - visibleSets.length;
+  setHint.textContent = hide && hiddenSetCount
+    ? `${visibleSets.length} of ${deck.sets.length} sets shown (${hiddenSetCount} hidden as completed)`
+    : `${deck.sets.length} set${deck.sets.length === 1 ? "" : "s"} in this deck`;
+
+  // Restore the saved set: match exactly, then by abbreviation (the CLI accepts
+  // either name or abbr, so a value saved as 'HardNoir' should still pick
+  // 'Hard Noir (Shadow Density)' if that set's abbr is 'HardNoir').
+  let restored = false;
+  if (pendingSet) {
+    if (pendingSet === SET_ALL) {
+      setEl.value = SET_ALL;
+      restored = true;
+    } else {
+      const wanted = pendingSet.toLowerCase();
+      const hit = deck.sets.find(s =>
+        s.value.toLowerCase() === wanted ||
+        (s.label || "").toLowerCase().includes(`(${wanted})`)
+      );
+      if (hit) {
+        setEl.value = hit.value;
+        restored = true;
+      }
+    }
+    pendingSet = null;
+  }
+  if (!restored) setEl.value = SET_ALL;
+  refreshDerived();
+}
+
+// ---- wire up --------------------------------------------------------------
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadInitial();
+
+  // Live preview/derived updates
+  for (const f of fields) {
+    const el = $(f);
+    if (!el) continue;
+    el.addEventListener("input", refreshDerived);
+    el.addEventListener("change", refreshDerived);
+  }
+  document.querySelectorAll('input[name=target]').forEach(r => r.addEventListener("change", refreshDerived));
+
+  // Reload the deck/set tree whenever the input path changes.
+  let inputDebounce;
+  $("input").addEventListener("input", () => {
+    clearTimeout(inputDebounce);
+    const v = $("input").value.trim();
+    inputDebounce = setTimeout(() => loadInputStructure(v), 300);
+  });
+  $("input").addEventListener("change", () => loadInputStructure($("input").value.trim()));
+
+  // When the deck changes, repopulate the set dropdown.
+  $("deck").addEventListener("change", () => {
+    pendingSet = null;
+    populateSetDropdown();
+  });
+
+  // Toggle hide-completed: refresh cache status and redraw the dropdowns.
+  $("hide_completed").addEventListener("change", async () => {
+    pendingDeck = $("deck").value || null;
+    pendingSet = $("set_name").value || null;
+    if ($("hide_completed").checked) await loadCacheStatus();
+    if (INPUT_TREE) populateDeckDropdown();
+  });
+
+  // Cache state depends on target & checkpoint_dir too; re-fetch when those change.
+  document.querySelectorAll('input[name=target]').forEach(r => r.addEventListener("change", async () => {
+    if (!$("input").value.trim()) return;
+    pendingDeck = $("deck").value || null;
+    pendingSet = $("set_name").value || null;
+    await loadCacheStatus();
+    if (INPUT_TREE && $("hide_completed").checked) populateDeckDropdown();
+  }));
+  let ckptDebounce;
+  $("checkpoint_dir").addEventListener("input", () => {
+    clearTimeout(ckptDebounce);
+    ckptDebounce = setTimeout(async () => {
+      if (!$("input").value.trim()) return;
+      pendingDeck = $("deck").value || null;
+      pendingSet = $("set_name").value || null;
+      await loadCacheStatus();
+      if (INPUT_TREE && $("hide_completed").checked) populateDeckDropdown();
+    }, 300);
+  });
+
+  // Build the output JSON from whatever's in the cache (no LLM calls).
+  $("build-from-cache").onclick = buildFromCache;
+
+  // Buttons
+  $("save-cfg").onclick = saveConfig;
+  $("reset-cfg").onclick = resetConfig;
+  $("run-btn").onclick = startRun;
+  $("cancel-btn").onclick = cancelRun;
+  $("clear-log").onclick = () => {
+    $("log").innerHTML = "";
+    progress = { current: 0, total: 0, startedAt: 0, lastTickAt: 0, completedSinceStart: 0 };
+    updateProgressBar();
+  };
+  $("copy-cmd").onclick = async () => {
+    const cmd = $("cmd-preview").textContent;
+    try { await navigator.clipboard.writeText(cmd); toast("Command copied", "ok"); }
+    catch { toast("Copy failed (clipboard blocked)", "err"); }
+  };
+  $("list-models").onclick = listModels;
+  $("test-conn").onclick = testConnection;
+  $("output-default").onclick = () => { $("output").value = ""; refreshDerived(); };
+
+  // Collapsible
+  document.querySelectorAll(".card.collapsible h2").forEach(h => {
+    h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed"));
+  });
+
+  // File browser
+  $("browse-input").onclick = () => openBrowse("input", $("input").value || "");
+  $("browse-go").onclick = () => loadBrowse($("browse-path").value);
+  $("browse-up").onclick = () => {
+    const parent = $("browse-list").dataset.parent;
+    if (parent) loadBrowse(parent);
+  };
+  $("browse-close").onclick = () => $("browse-dialog").close();
+
+  // Keyboard: Ctrl/Cmd+Enter to run
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !$("run-btn").disabled) {
+      startRun();
+    }
+  });
+});
+</script>
+
+</body>
+</html>
