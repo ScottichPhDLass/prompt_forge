@@ -339,8 +339,21 @@ class LMStudioClient:
                 headers=self._auth_headers(),
             )
             return True
-        except Exception:
-            return False
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check the API key in the LLM Provider settings."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+                f"Is the LM Studio server running?"
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the LM Studio server running and accessible?"
+            ) from e
 
     def list_models(self) -> list[str]:
         try:
@@ -349,8 +362,21 @@ class LMStudioClient:
                 timeout=15,
                 headers=self._auth_headers(),
             )
-        except Exception:
-            return []
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check the API key in the LLM Provider settings."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+                f"Is the LM Studio server running?"
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the LM Studio server running and accessible?"
+            ) from e
         return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
 
     # ---- main entry point ----------------------------------------------
@@ -556,7 +582,14 @@ def make_client(cfg: LLMConfig) -> LLMClient:
                 default_ports=cfg.default_ports,
             )
             client = _build(candidate, test_cfg)
-            if client.ping():
+            try:
+                available = client.ping()
+            except LLMError:
+                # Server responded — could be an auth error or a 5xx.
+                # Either way the provider is reachable; select it and let
+                # the first real call surface the auth error clearly.
+                available = True
+            if available:
                 # Use the resolved host for the real client.
                 cfg.provider = candidate
                 cfg.host = test_cfg.host

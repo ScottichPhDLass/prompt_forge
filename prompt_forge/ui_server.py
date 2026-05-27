@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .llm_client import LLMConfig, make_client
+from .llm_client import LLMConfig, LLMError, make_client
 
 log = logging.getLogger(__name__)
 
@@ -683,6 +683,8 @@ class _Handler(BaseHTTPRequestHandler):
         ok = False
         try:
             ok = client.ping()
+        except LLMError as e:
+            return {"ok": False, "error": str(e)}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"ping failed: {e}"}
         models: list[str] = []

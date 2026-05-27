@@ -37,7 +37,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - py<3.11 fallback
     import tomli as tomllib  # type: ignore
 
-from .llm_client import LLMConfig, make_client
+from .llm_client import LLMConfig, LLMError, make_client
 from .pipeline import Pipeline, PipelineConfig, RunSelection
 
 
@@ -234,12 +234,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: failed to initialize LLM provider: {e}", file=sys.stderr)
         return 3
 
-    if not client.ping():
-        print(
-            f"error: cannot reach {lcfg.provider} at {lcfg.host}. "
-            f"Is the server running and is the model '{lcfg.model}' loaded?",
-            file=sys.stderr,
-        )
+    try:
+        if not client.ping():
+            print(
+                f"error: cannot reach {lcfg.provider} at {lcfg.host}. "
+                f"Is the server running and is the model '{lcfg.model}' loaded?",
+                file=sys.stderr,
+            )
+            return 3
+    except LLMError as e:
+        print(f"error: {e}", file=sys.stderr)
         return 3
 
     print(
