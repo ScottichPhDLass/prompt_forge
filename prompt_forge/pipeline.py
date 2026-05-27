@@ -480,6 +480,10 @@ class Pipeline:
                     schema_hint=self.bank.boilerplate_stripper_schema,
                 )
                 stripped = _coerce_sdxl_entry(out)
+                # Safety net: if the stripper removed everything, keep the
+                # original tag lists so prompts are never left empty.
+                if not stripped.get("positive_tags") and not stripped.get("negative_tags"):
+                    stripped = entry
                 # Preserve fields the stripper doesn't return (decision/shot_type).
                 merged = dict(entry)
                 merged.update(
