@@ -119,6 +119,21 @@
 
   .row { display: flex; gap: 6px; align-items: center; }
   .row > input { flex: 1; }
+  .pwd-wrap { display: flex; gap: 4px; align-items: center; }
+  .pwd-wrap > input { flex: 1; }
+  .pwd-toggle {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 4px 8px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .pwd-toggle:hover { color: var(--fg); border-color: var(--accent); }
+  .pwd-toggle.reveal { color: var(--accent); }
 
   button {
     background: var(--panel-2);
@@ -350,7 +365,10 @@
         </div>
         <div class="field">
           <label>API key <span class="hint">LM Studio</span></label>
-          <input type="text" id="api_key" placeholder="lm-studio">
+          <div class="pwd-wrap">
+            <input type="password" id="api_key" placeholder="lm-studio" autocomplete="off">
+            <button type="button" class="pwd-toggle" id="pwd-toggle" title="Show API key">&#x1F441;</button>
+          </div>
         </div>
         <div class="field">
           <label>Reasoning effort <span class="hint">LM Studio reasoning models</span></label>
@@ -1236,6 +1254,21 @@ document.addEventListener("DOMContentLoaded", () => {
   $("list-models").onclick = listModels;
   $("test-conn").onclick = testConnection;
   $("output-default").onclick = () => { $("output").value = ""; refreshDerived(); };
+
+  // Password reveal toggle
+  $("pwd-toggle").onclick = () => {
+    const inp = $("api_key");
+    const btn = $("pwd-toggle");
+    if (inp.type === "password") {
+      inp.type = "text";
+      btn.classList.add("reveal");
+      btn.title = "Hide API key";
+    } else {
+      inp.type = "password";
+      btn.classList.remove("reveal");
+      btn.title = "Show API key";
+    }
+  };
 
   // Collapsible
   document.querySelectorAll(".card.collapsible h2").forEach(h => {
