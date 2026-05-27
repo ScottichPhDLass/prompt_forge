@@ -835,6 +835,7 @@ async function listModels() {
       body: JSON.stringify({
         provider: $("provider").value,
         host: $("host").value.trim(),
+        api_key: $("api_key").value.trim(),
       }),
     });
     if (r.error) { $("conn-status").textContent = "error: " + r.error; $("conn-status").className = "status err"; return; }
@@ -863,6 +864,7 @@ async function testConnection() {
         provider: $("provider").value,
         host: $("host").value.trim(),
         model: $("model").value.trim(),
+        api_key: $("api_key").value.trim(),
       }),
     });
     if (r.ok) {
