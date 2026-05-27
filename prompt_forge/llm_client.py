@@ -417,6 +417,13 @@ class LMStudioClient:
             finish = choice.get("finish_reason", "")
             msg = choice.get("message", {}) or {}
             content = msg.get("content", "") or ""
+            
+            # Some reasoning models put the visible output in reasoning_content
+            # and leave content empty. Fall back gracefully.
+            if not content.strip():
+                rc = msg.get("reasoning_content", "") or ""
+                if rc.strip():
+                    content = rc
 
             if not content.strip():
                 # Surface usage info when present so users can see what happened.
