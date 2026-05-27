@@ -357,19 +357,19 @@ Decision policy (hybrid mode):
   mood, set-specific concept).
 - Either way the output must satisfy every rule in the preamble.
 
-Output object shape:
-- positive_tags: ordered list of tag strings. Tags only - no "BREAK", no
-  weights inside the strings. Weights and breaks are expressed in separate
-  fields below.
-- negative_tags: ordered list of negative tag strings. Same rules.
-- weights: an object mapping the EXACT positive or negative tag string to a
-  weight float (0.5-1.4). Omit any tag whose weight is 1.0. Tags not present
-  in this object render with no weight wrapper.
-- breaks: list of integer indexes into positive_tags. A `BREAK` keyword is
-  inserted BEFORE the tag at each listed index. Use 1-2 break points so the
-  rendered positive is split into 2-3 CLIP chunks of <= 75 tokens each.
-  Indexes must be strictly increasing and within range. Do NOT put a break
-  at index 0.
+Output object shape (ALL fields REQUIRED on EVERY response):
+- positive_tags: ordered list of tag strings (10-25 tags). Tags only -
+  no "BREAK", no weights inside the strings.
+- negative_tags: ordered list of negative tag strings (15-25 tags).
+- weights: REQUIRED. MUST contain 2-5 entries weighting the most
+  important lighting, compositional, or style-defining tags (range 1.1-1.4).
+  Example: {"chiaroscuro lighting": 1.3, "dramatic side light": 1.2}
+- breaks: REQUIRED. MUST contain 1-2 integer indexes that split the
+  positive_tags into 2-3 CLIP chunks of <=75 tokens each.
+  Example: breaks=[8, 17] splits 25 tags into chunks of 8, 9, and 8.
+
+BAD output (MUST AVOID): breaks=[] and weights={} --- these are invalid.
+GOOD output: breaks=[9, 18] and weights={"chiaroscuro": 1.3, "soft window light": 1.2}
 """
 
 SDXL_PER_PROMPT_USER = """\
