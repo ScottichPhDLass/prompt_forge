@@ -327,6 +327,20 @@ Negative prompt conventions:
 - Negatives describe what must NOT appear; positives describe what MUST
   appear. Never let a forbidden term leak into the positive list.
 
+CRITICAL OUTPUT RULES:
+- EVERY positive_tags list MUST have at least 10 distinct, concrete tag phrases.
+  Do NOT use "...", "etc.", "and more", or any form of ellipsis or abbreviation.
+  Every single tag must be a complete, self-explanatory phrase.
+- EVERY negative_tags list MUST have at least 15 distinct tag phrases drawn
+  from the baseline vocabulary plus concept-specific prohibitions.
+- ALWAYS populate weights with at least 2-3 entries for the most important
+  lighting/compositional/style-defining tags (range 1.1-1.4).
+- ALWAYS include at least 1 break index to split the positive into 2 CLIP
+  chunks of roughly equal size. Two breaks producing 3 chunks is better.
+- Every tag must be a short noun phrase, adjective+noun, or established
+  booru/photography token. No sentences, no conjunctions within a tag.
+- output MUST be valid JSON. Every field required on every response.
+
 You always return STRICT JSON. No prose, no markdown, no code fences.
 """
 

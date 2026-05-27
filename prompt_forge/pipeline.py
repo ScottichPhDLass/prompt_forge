@@ -570,14 +570,22 @@ def _name_match(query: str, *candidates: str | None) -> bool:
 
 
 def _as_str_list(v: Any) -> list[str]:
-    """Coerce model output into a list[str], dropping empties."""
+    """Coerce model output into a list[str], dropping empties and "..." placeholders."""
     if v is None:
         return []
     if isinstance(v, str):
-        # Tolerate the model returning a comma-separated string instead of a list.
-        return [s.strip() for s in v.split(",") if s.strip()]
+        # Strip JSON array wrapper if the model returned a stringified list.
+        s = v.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip() and str(x).strip() != "..."]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [x.strip() for x in s.split(",") if x.strip() and x.strip() != "..."]
     if isinstance(v, list):
-        return [str(x).strip() for x in v if str(x).strip()]
+        return [str(x).strip() for x in v if str(x).strip() and str(x).strip() != "..."]
     return []
 
 
