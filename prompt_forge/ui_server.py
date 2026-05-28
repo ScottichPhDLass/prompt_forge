@@ -222,6 +222,16 @@ def _validate_json_size(handler: "BaseHTTPRequestHandler", max_bytes: int = 10_0
         return False
 
 
+def _shell_quote(s: str) -> str:
+    """Quote a string for safe shell display (not execution — just for log output)."""
+    if not s:
+        return "''"
+    if any(c in s for c in (' ', '\t', '\n', "'", '"', '$', '`', '\\')):
+        escaped = s.replace("'", "'\\''")
+        return f"'{escaped}'"
+    return s
+
+
 # ---------------------------------------------------------------------------
 # Run manager: spawns CLI as a subprocess and streams its output to listeners.
 # ---------------------------------------------------------------------------
@@ -320,7 +330,7 @@ class RunManager:
 
         run.proc = proc
         run.state = "running"
-        run.emit(f"$ {' '.join(cmd)}")
+        run.emit(f"$ {' '.join(_shell_quote(a) for a in cmd)}")
         threading.Thread(target=self._reader, args=(run,), daemon=True).start()
         return run
 

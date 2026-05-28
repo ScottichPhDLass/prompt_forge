@@ -629,7 +629,7 @@ function previewCommand() {
   argv.push("--provider", cfg.provider);
   if (cfg.host) argv.push("--host", quote(cfg.host));
   if (cfg.model) argv.push("--model", quote(cfg.model));
-  if (cfg.provider === "lmstudio" && cfg.api_key) argv.push("--api-key", quote(cfg.api_key));
+  if ((cfg.provider === "lmstudio" || cfg.provider === "gemini" || cfg.provider === "deepseek" || cfg.provider === "openai") && cfg.api_key) argv.push("--api-key", quote(cfg.api_key));
   if (cfg.reasoning_effort) argv.push("--reasoning-effort", cfg.reasoning_effort);
   if (cfg.timeout_s) argv.push("--timeout", cfg.timeout_s);
   if (cfg.temperature != null && cfg.temperature !== "") argv.push("--temperature", cfg.temperature);
