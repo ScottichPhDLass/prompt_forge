@@ -37,7 +37,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - py<3.11 fallback
     import tomli as tomllib  # type: ignore
 
-from .llm_client import LLMConfig, LLMError, make_client
+from .llm_client import LLMConfig, make_client
 from .pipeline import Pipeline, PipelineConfig, RunSelection
 
 
@@ -79,13 +79,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # Provider selection
     p.add_argument(
         "--provider",
-        choices=["auto", "ollama", "lmstudio", "gemini", "deepseek", "openai"],
+        choices=["auto", "ollama", "lmstudio"],
         default=None,
         help="LLM backend. 'auto' probes Ollama then LM Studio.",
     )
     p.add_argument("--host", default=None, help="LLM server URL (default depends on provider).")
     p.add_argument("--model", default=None, help="Model name as known to the provider.")
-    p.add_argument("--api-key", default=None, help="API key (required for Gemini/DeepSeek/OpenAI, optional for LM Studio).")
+    p.add_argument("--api-key", default=None, help="API key (LM Studio only; any string works).")
     p.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
@@ -99,6 +99,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-predict", type=int, default=None, dest="num_predict",
                    help="Max output tokens (Ollama num_predict / LM Studio max_tokens).")
     p.add_argument("--concurrency", type=int, default=None, help="Parallel rewrite workers.")
+
+    # Checkpoint variant
+    p.add_argument(
+        "--variant",
+        choices=["sdxl-tag", "sdxl-photo", "flux-prose", "flux-hybrid"],
+        default=None,
+        help="Prompt archetype. Each variant implies a --target. Overrides the "
+             "LLM system prompt with checkpoint-family-specific instructions:\n"
+             "  sdxl-tag    - Tag-based (Illustrious, Pony, danbooru-derived)\n"
+             "  sdxl-photo  - Photographic (Juggernaut, Realism Engine, EpicRealism)\n"
+             "  flux-prose  - Natural language prose (FLUX Dev, Schnell)\n"
+             "  flux-hybrid - Tag + prose mix (FLUX + RealismLoRA)",
+    )
 
     # Pipeline overrides
     p.add_argument("--checkpoint-dir", default=None)
@@ -115,24 +128,6 @@ def _load_toml(path: str | None) -> dict:
         return {}
     with open(path, "rb") as f:
         return tomllib.load(f)
-
-
-def _load_json_config() -> dict:
-    """Auto-load config.json next to the package if it exists.
-    
-    The Web UI writes config.json (JSON), while the CLI reads TOML via --config.
-    This fallback bridges the gap so CLI commands pick up settings (like API keys)
-    that were configured through the Web UI.
-    """
-    from pathlib import Path as _P
-    pkg = _P(__file__).resolve().parent
-    cfg_json = pkg.parent / "config.json"
-    if cfg_json.exists():
-        try:
-            return json.loads(cfg_json.read_text("utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    return {}
 
 
 def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, PipelineConfig]:
@@ -155,7 +150,24 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
         api_key=args.api_key or llm_cfg.get("api_key", "lm-studio"),
         reasoning_effort=args.reasoning_effort or llm_cfg.get("reasoning_effort", ""),
     )
-    target = args.target or pipe.get("target") or llm_cfg.get("target") or "flux"
+    target = args.target or pipe.get("target") or llm_cfg.get("target") or ""
+    variant = args.variant or pipe.get("variant", "")
+
+    # If variant is set, it implies the target (and may override explicit --target)
+    if variant:
+        from .templates import VARIANT_TARGET as _vt
+        implied = _vt.get(variant)
+        if implied and target and target != implied:
+            raise ValueError(
+                f"Variant {variant!r} implies target={implied!r} but "
+                f"target={target!r} was also specified. Remove --target when "
+                f"using --variant, or use --target without --variant."
+            )
+        if implied:
+            target = implied
+
+    if not target:
+        target = "flux"
     if target not in ("flux", "sdxl"):
         raise ValueError(f"Invalid target {target!r}; expected 'flux' or 'sdxl'.")
     pcfg = PipelineConfig(
@@ -172,6 +184,7 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
         force_full_color=pipe.get("force_full_color", True),
         concurrency=args.concurrency or llm_cfg.get("concurrency", 2),
         target=target,
+        variant=variant,
     )
     return lcfg, pcfg
 
@@ -205,25 +218,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     toml_cfg = _load_toml(args.config)
-    # Merge Web UI settings (config.json) as a fallback so CLI picks up API keys
-    # and provider settings configured through the UI.
-    json_cfg = _load_json_config()
-    if json_cfg:
-        llm = toml_cfg.setdefault("llm", {})
-        # map flat JSON keys to [llm] section
-        _JSON_TO_LLM = {
-            "provider", "host", "model", "api_key", "reasoning_effort",
-            "timeout_s", "temperature", "num_predict", "concurrency",
-        }
-        for k in _JSON_TO_LLM:
-            if k in json_cfg and (k not in llm or not llm.get(k)):
-                llm[k] = json_cfg[k]
-        # Map pipeline keys
-        pipe = toml_cfg.setdefault("pipeline", {})
-        if "target" in json_cfg and "target" not in pipe:
-            pipe["target"] = json_cfg["target"]
-        if "checkpoint_dir" in json_cfg and "checkpoint_dir" not in pipe:
-            pipe["checkpoint_dir"] = json_cfg["checkpoint_dir"]
     lcfg, pcfg = _merge_config(toml_cfg, args)
 
     in_path = Path(args.input)
@@ -271,16 +265,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: failed to initialize LLM provider: {e}", file=sys.stderr)
         return 3
 
-    try:
-        if not client.ping():
-            print(
-                f"error: cannot reach {lcfg.provider} at {lcfg.host}. "
-                f"Is the server running and is the model '{lcfg.model}' loaded?",
-                file=sys.stderr,
-            )
-            return 3
-    except LLMError as e:
-        print(f"error: {e}", file=sys.stderr)
+    if not client.ping():
+        print(
+            f"error: cannot reach {lcfg.provider} at {lcfg.host}. "
+            f"Is the server running and is the model '{lcfg.model}' loaded?",
+            file=sys.stderr,
+        )
         return 3
 
     print(
@@ -290,8 +280,9 @@ def main(argv: list[str] | None = None) -> int:
 
     pipeline = Pipeline(client, pcfg)
     out = pipeline.run(data, selection)
-    # Record the target at top level so downstream consumers can branch on it.
+    # Record the target and variant at top level so downstream can branch on them.
     out["target"] = pcfg.target
+    out["variant"] = pcfg.variant
 
     assert out_path is not None  # dry-run path returns earlier
     out_path.parent.mkdir(parents=True, exist_ok=True)

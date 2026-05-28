@@ -24,6 +24,83 @@ from dataclasses import dataclass
 from typing import Literal
 
 Target = Literal["flux", "sdxl"]
+Variant = Literal["sdxl-tag", "sdxl-photo", "flux-prose", "flux-hybrid"]
+
+# Convenience: variant -> target lookup
+VARIANT_TARGET: dict[str, str] = {
+    "sdxl-tag": "sdxl",
+    "sdxl-photo": "sdxl",
+    "flux-prose": "flux",
+    "flux-hybrid": "flux",
+}
+
+# ---------------------------------------------------------------------------
+# Variant-specific system-prompt addenda
+# ---------------------------------------------------------------------------
+
+VARIANT_INSTRUCTIONS: dict[str, str] = {
+    "": "",  # no variant = default target template (unchanged)
+
+    "sdxl-tag": """
+
+Checkpoint variant: SDXL Tag-based (Illustrious, CyberRealistic, Pony, danbooru-derived)
+- Atomic booru-style single-concept tags are REQUIRED. Never combine two
+  concepts into one tag. Tags like "classic nude portrait" are acceptable;
+  "a woman reclining while holding a phone" is not — split into atomic tags.
+- The negative list must be EXTENSIVE. These models default to anime and
+  illustration styles. Include all baseline CG/illustration/anime negatives
+  plus concept-specific ones.
+- Always include "realistic photograph" as the first tag to steer the model
+  toward photographic output.
+- Weights above 1.0 ARE effective on this architecture; use sparingly
+  (1.1-1.2 max) for set-defining concepts.
+""",
+
+    "sdxl-photo": """
+
+Checkpoint variant: SDXL Photographic (Juggernaut, Realism Engine, EpicRealism, DreamShaper)
+- Short descriptive phrases (2-4 words) are acceptable in addition to
+  single-concept tags. Avoid booru-style single-word tags. "velvet chaise
+  lounge with directional pile" is fine.
+- These models produce photographic skin texture natively. Include texture
+  tags like "visible skin pores", "fine vellus hair" for reinforcement,
+  not as strict requirements.
+- The negative list can be SHORTER than tag-based — focus on CG, plastic
+  skin, and over-sharpening artifacts. Anatomical corrections (extra
+  fingers, bad hands) are less relevant.
+- Weights above 1.0 can cause artifacts; prefer tag ordering for emphasis.
+- Film stock references ("Kodak Portra 400", "35mm color film") work well.
+""",
+
+    "flux-prose": """
+
+Checkpoint variant: FLUX Prose (FLUX Dev, FLUX Schnell — natural language)
+- Output must be a SINGLE PARAGRAPH of descriptive prose, NOT comma-separated
+  tags. Full sentences with conjunctions, prepositions, and natural flow.
+- Begin with a shot-type phrase: "A realistic photographic medium shot of..."
+- Describe the subject, pose, setting, lighting, textures, and mood in
+  flowing narrative prose. Be specific about light direction, quality, and
+  shadow behaviour.
+- Skin must read as natural: visible pores, fine hairs, subtle imperfections.
+- The negative prompt is a string of comma-separated short phrases. Include
+  baseline CG/illustration/quality negatives adapted to the scene.
+- NO weights. NO BREAKs. NO tag syntax of any kind.
+""",
+
+    "flux-hybrid": """
+
+Checkpoint variant: FLUX Hybrid (FLUX + RealismLoRA — tag + prose mix)
+- Hybrid style: lead with key descriptive phrases (like SDXL tags but in
+  natural language), then flow into prose. E.g. "Medium shot, cinematic
+  lighting, dramatic chiaroscuro. A young woman reclines on a velvet chaise
+  with one arm draped above her head..."
+- Begin with a shot-type phrase followed by comma-separated style keywords,
+  then a full descriptive sentence.
+- Keep the positive prompt as a single paragraph with natural flow.
+- Negative list is comma-separated phrases, same as prose variant.
+- RealismLoRA handles tag-like phrases well; prose fills in detail.
+""",
+}
 
 SYSTEM_PROMPT = """\
 You are a forensic image analyst and colorometrist. Your sole objective is to describe the provided image
@@ -327,20 +404,6 @@ Negative prompt conventions:
 - Negatives describe what must NOT appear; positives describe what MUST
   appear. Never let a forbidden term leak into the positive list.
 
-CRITICAL OUTPUT RULES:
-- EVERY positive_tags list MUST have at least 10 distinct, concrete tag phrases.
-  Do NOT use "...", "etc.", "and more", or any form of ellipsis or abbreviation.
-  Every single tag must be a complete, self-explanatory phrase.
-- EVERY negative_tags list MUST have at least 15 distinct tag phrases drawn
-  from the baseline vocabulary plus concept-specific prohibitions.
-- ALWAYS populate weights with at least 2-3 entries for the most important
-  lighting/compositional/style-defining tags (range 1.1-1.4).
-- ALWAYS include at least 1 break index to split the positive into 2 CLIP
-  chunks of roughly equal size. Two breaks producing 3 chunks is better.
-- Every tag must be a short noun phrase, adjective+noun, or established
-  booru/photography token. No sentences, no conjunctions within a tag.
-- output MUST be valid JSON. Every field required on every response.
-
 You always return STRICT JSON. No prose, no markdown, no code fences.
 """
 
@@ -357,19 +420,19 @@ Decision policy (hybrid mode):
   mood, set-specific concept).
 - Either way the output must satisfy every rule in the preamble.
 
-Output object shape (ALL fields REQUIRED on EVERY response):
-- positive_tags: ordered list of tag strings (10-25 tags). Tags only -
-  no "BREAK", no weights inside the strings.
-- negative_tags: ordered list of negative tag strings (15-25 tags).
-- weights: REQUIRED. MUST contain 2-5 entries weighting the most
-  important lighting, compositional, or style-defining tags (range 1.1-1.4).
-  Example: {"chiaroscuro lighting": 1.3, "dramatic side light": 1.2}
-- breaks: REQUIRED. MUST contain 1-2 integer indexes that split the
-  positive_tags into 2-3 CLIP chunks of <=75 tokens each.
-  Example: breaks=[8, 17] splits 25 tags into chunks of 8, 9, and 8.
-
-BAD output (MUST AVOID): breaks=[] and weights={} --- these are invalid.
-GOOD output: breaks=[9, 18] and weights={"chiaroscuro": 1.3, "soft window light": 1.2}
+Output object shape:
+- positive_tags: ordered list of tag strings. Tags only - no "BREAK", no
+  weights inside the strings. Weights and breaks are expressed in separate
+  fields below.
+- negative_tags: ordered list of negative tag strings. Same rules.
+- weights: an object mapping the EXACT positive or negative tag string to a
+  weight float (0.5-1.4). Omit any tag whose weight is 1.0. Tags not present
+  in this object render with no weight wrapper.
+- breaks: list of integer indexes into positive_tags. A `BREAK` keyword is
+  inserted BEFORE the tag at each listed index. Use 1-2 break points so the
+  rendered positive is split into 2-3 CLIP chunks of <= 75 tokens each.
+  Indexes must be strictly increasing and within range. Do NOT put a break
+  at index 0.
 """
 
 SDXL_PER_PROMPT_USER = """\
@@ -558,9 +621,35 @@ SDXL_BANK = TemplateBank(
 )
 
 
-def select_templates(target: Target) -> TemplateBank:
+def select_templates(target: Target, variant: str = "") -> TemplateBank:
     if target == "flux":
+        if variant in VARIANT_INSTRUCTIONS and VARIANT_INSTRUCTIONS[variant]:
+            return TemplateBank(
+                target="flux",
+                per_prompt_system=PER_PROMPT_SYSTEM + VARIANT_INSTRUCTIONS[variant],
+                per_prompt_user=PER_PROMPT_USER,
+                per_prompt_schema=PER_PROMPT_SCHEMA,
+                boilerplate_extractor_system=BOILERPLATE_EXTRACTOR_SYSTEM,
+                boilerplate_extractor_user=BOILERPLATE_EXTRACTOR_USER,
+                boilerplate_extractor_schema=BOILERPLATE_EXTRACTOR_SCHEMA,
+                boilerplate_stripper_system=BOILERPLATE_STRIPPER_SYSTEM,
+                boilerplate_stripper_user=BOILERPLATE_STRIPPER_USER,
+                boilerplate_stripper_schema=BOILERPLATE_STRIPPER_SCHEMA,
+            )
         return FLUX_BANK
     if target == "sdxl":
+        if variant in VARIANT_INSTRUCTIONS and VARIANT_INSTRUCTIONS[variant]:
+            return TemplateBank(
+                target="sdxl",
+                per_prompt_system=SDXL_PER_PROMPT_SYSTEM + VARIANT_INSTRUCTIONS[variant],
+                per_prompt_user=SDXL_PER_PROMPT_USER,
+                per_prompt_schema=SDXL_PER_PROMPT_SCHEMA,
+                boilerplate_extractor_system=SDXL_BOILERPLATE_EXTRACTOR_SYSTEM,
+                boilerplate_extractor_user=SDXL_BOILERPLATE_EXTRACTOR_USER,
+                boilerplate_extractor_schema=SDXL_BOILERPLATE_EXTRACTOR_SCHEMA,
+                boilerplate_stripper_system=SDXL_BOILERPLATE_STRIPPER_SYSTEM,
+                boilerplate_stripper_user=SDXL_BOILERPLATE_STRIPPER_USER,
+                boilerplate_stripper_schema=SDXL_BOILERPLATE_STRIPPER_SCHEMA,
+            )
         return SDXL_BANK
     raise ValueError(f"Unknown target: {target!r}. Expected 'flux' or 'sdxl'.")

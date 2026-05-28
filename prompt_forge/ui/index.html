@@ -100,7 +100,7 @@
   }
   .field label .hint { font-size: 11px; color: var(--muted); opacity: 0.7; font-weight: normal; }
 
-  input[type=text], input[type=password], input[type=number], select, textarea {
+  input[type=text], input[type=number], select, textarea {
     background: var(--panel-2);
     color: var(--fg);
     border: 1px solid var(--border);
@@ -111,7 +111,7 @@
     width: 100%;
     min-width: 0;
   }
-  input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, select:focus, textarea:focus {
+  input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--accent-2);
   }
@@ -119,21 +119,6 @@
 
   .row { display: flex; gap: 6px; align-items: center; }
   .row > input { flex: 1; }
-  .pwd-wrap { display: flex; gap: 4px; align-items: center; }
-  .pwd-wrap > input { flex: 1; }
-  .pwd-toggle {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    padding: 4px 8px;
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .pwd-toggle:hover { color: var(--fg); border-color: var(--accent); }
-  .pwd-toggle.reveal { color: var(--accent); }
 
   button {
     background: var(--panel-2);
@@ -301,6 +286,16 @@
             <label><input type="radio" name="target" value="sdxl"><span>SDXL</span></label>
           </div>
         </div>
+        <div class="field span2">
+          <label>Variant <span class="hint" id="variant-hint">archetype for the target</span></label>
+          <select id="variant">
+            <option value="">Default (no variant instructions)</option>
+            <option value="sdxl-tag">Tag-based (Illustrious, Pony, danbooru)</option>
+            <option value="sdxl-photo">Photographic (Juggernaut, Realism Engine)</option>
+            <option value="flux-prose">Prose (FLUX Dev, Schnell)</option>
+            <option value="flux-hybrid">Hybrid (FLUX + RealismLoRA)</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -344,9 +339,6 @@
             <option value="auto">auto (probe Ollama, then LM Studio)</option>
             <option value="ollama">ollama</option>
             <option value="lmstudio">lmstudio</option>
-            <option value="gemini">gemini</option>
-            <option value="deepseek">deepseek</option>
-            <option value="openai">openai (generic / custom host)</option>
           </select>
         </div>
         <div class="field">
@@ -367,14 +359,11 @@
           <span class="status" id="conn-status">&nbsp;</span>
         </div>
         <div class="field">
-          <label>API key <span class="hint">required for remote providers</span></label>
-          <div class="pwd-wrap">
-            <input type="password" id="api_key" placeholder="lm-studio, or your Gemini/DeepSeek key" autocomplete="off">
-            <button type="button" class="pwd-toggle" id="pwd-toggle" title="Show API key">&#x1F441;</button>
-          </div>
+          <label>API key <span class="hint">LM Studio</span></label>
+          <input type="text" id="api_key" placeholder="lm-studio">
         </div>
         <div class="field">
-          <label>Reasoning effort <span class="hint">for reasoning models (R1, etc.)</span></label>
+          <label>Reasoning effort <span class="hint">LM Studio reasoning models</span></label>
           <select id="reasoning_effort">
             <option value="">(none)</option>
             <option value="low">low</option>
@@ -499,7 +488,7 @@
 
 const $ = (id) => document.getElementById(id);
 const fields = [
-  "input", "output", "target", "process_all", "hide_completed", "deck", "set_name",
+  "input", "output", "target", "variant", "process_all", "hide_completed", "deck", "set_name",
   "provider", "host", "model", "api_key", "reasoning_effort",
   "timeout_s", "temperature", "num_predict", "concurrency",
   "checkpoint_dir", "recompute_boilerplate", "validate",
@@ -601,11 +590,19 @@ function refreshDerived() {
     out.placeholder = `<input_stem>.${tgt}.json`;
   }
 
-  var prov = $("provider").value;
-  $("api_key").parentElement.style.opacity = (prov === "lmstudio" || prov === "gemini" || prov === "deepseek" || prov === "openai") ? "1" : "0.5";
-  // Reasoning effort hint
-  var re_hint = $("reasoning_effort").previousElementSibling;
-  if (re_hint) re_hint.textContent = "Reasoning effort " + (prov === "deepseek" ? "(DeepSeek R1 / V4 Flash)" : prov === "lmstudio" ? "(LM Studio reasoning models)" : "");
+  $("api_key").parentElement.style.opacity = ($("provider").value === "lmstudio") ? "1" : "0.5";
+
+  // Variant visibility: show only options compatible with the current target
+  const varSel = $("variant");
+  Array.from(varSel.options).forEach(opt => {
+    if (!opt.value) { opt.hidden = false; return; }  // always show "Default"
+    const prefix = opt.value.split("-")[0];
+    opt.hidden = (prefix !== tgt);
+  });
+  // If the current selection is now hidden, reset to default
+  if (varSel.selectedOptions[0] && varSel.selectedOptions[0].hidden) {
+    varSel.value = "";
+  }
 
   // Live command preview
   $("cmd-preview").textContent = previewCommand();
@@ -619,6 +616,7 @@ function previewCommand() {
   argv.push("--input", quote(inp));
   if (cfg.output) argv.push("--output", quote(cfg.output));
   argv.push("--target", cfg.target);
+  if (cfg.variant) argv.push("--variant", cfg.variant);
   if (cfg.process_all) argv.push("--all");
   else if (cfg.deck) {
     argv.push("--deck", quote(cfg.deck));
@@ -629,7 +627,7 @@ function previewCommand() {
   argv.push("--provider", cfg.provider);
   if (cfg.host) argv.push("--host", quote(cfg.host));
   if (cfg.model) argv.push("--model", quote(cfg.model));
-  if ((cfg.provider === "lmstudio" || cfg.provider === "gemini" || cfg.provider === "deepseek" || cfg.provider === "openai") && cfg.api_key) argv.push("--api-key", quote(cfg.api_key));
+  if (cfg.provider === "lmstudio" && cfg.api_key) argv.push("--api-key", quote(cfg.api_key));
   if (cfg.reasoning_effort) argv.push("--reasoning-effort", cfg.reasoning_effort);
   if (cfg.timeout_s) argv.push("--timeout", cfg.timeout_s);
   if (cfg.temperature != null && cfg.temperature !== "") argv.push("--temperature", cfg.temperature);
@@ -860,7 +858,6 @@ async function listModels() {
       body: JSON.stringify({
         provider: $("provider").value,
         host: $("host").value.trim(),
-        api_key: $("api_key").value.trim(),
       }),
     });
     if (r.error) { $("conn-status").textContent = "error: " + r.error; $("conn-status").className = "status err"; return; }
@@ -889,7 +886,6 @@ async function testConnection() {
         provider: $("provider").value,
         host: $("host").value.trim(),
         model: $("model").value.trim(),
-        api_key: $("api_key").value.trim(),
       }),
     });
     if (r.ok) {
@@ -1261,21 +1257,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("list-models").onclick = listModels;
   $("test-conn").onclick = testConnection;
   $("output-default").onclick = () => { $("output").value = ""; refreshDerived(); };
-
-  // Password reveal toggle
-  $("pwd-toggle").onclick = () => {
-    const inp = $("api_key");
-    const btn = $("pwd-toggle");
-    if (inp.type === "password") {
-      inp.type = "text";
-      btn.classList.add("reveal");
-      btn.title = "Hide API key";
-    } else {
-      inp.type = "password";
-      btn.classList.remove("reveal");
-      btn.title = "Show API key";
-    }
-  };
 
   // Collapsible
   document.querySelectorAll(".card.collapsible h2").forEach(h => {

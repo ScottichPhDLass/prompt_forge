@@ -25,7 +25,7 @@ from typing import Any
 from . import templates
 from .llm_client import LLMClient, LLMError
 from .templates import Target, select_templates
-from .validator import validate_pair, validate_sdxl_pair, estimate_clip_tokens, SDXL_MAX_CHUNK_TOKENS
+from .validator import validate_pair, validate_sdxl_pair
 
 log = logging.getLogger("prompt_forge")
 
@@ -43,6 +43,7 @@ class PipelineConfig:
     force_full_color: bool = True
     concurrency: int = 2
     target: Target = "flux"
+    variant: str = "default"
 
 
 @dataclass
@@ -68,6 +69,7 @@ class _SetCheckpoint:
     deck_idx: int
     set_idx: int
     target: Target = "flux"
+    variant: str = "default"
     prompts: list = field(default_factory=list)
     boilerplate: dict | None = None
     completed: bool = False
@@ -77,6 +79,7 @@ class _SetCheckpoint:
             "deck_idx": self.deck_idx,
             "set_idx": self.set_idx,
             "target": self.target,
+            "variant": self.variant,
             "prompts": self.prompts,
             "boilerplate": self.boilerplate,
             "completed": self.completed,
@@ -88,6 +91,7 @@ class _SetCheckpoint:
             deck_idx=d["deck_idx"],
             set_idx=d["set_idx"],
             target=d.get("target", "flux"),
+            variant=d.get("variant", "default"),
             prompts=d.get("prompts", []),
             boilerplate=d.get("boilerplate"),
             completed=d.get("completed", False),
@@ -98,7 +102,7 @@ class Pipeline:
     def __init__(self, client: LLMClient, cfg: PipelineConfig):
         self.client = client
         self.cfg = cfg
-        self.bank = select_templates(cfg.target)
+        self.bank = select_templates(cfg.target, cfg.variant)
         Path(self.cfg.checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
     # ---- entry point ------------------------------------------------------
@@ -146,6 +150,7 @@ class Pipeline:
                 f"Delete the checkpoint or use a different --checkpoint-dir."
             )
         ckpt.target = self.cfg.target
+        ckpt.variant = self.cfg.variant
 
         original_prompts = st.get("prompts", [])
         boilerplate = st.get("boilerplate", {}) or {}
@@ -320,14 +325,8 @@ class Pipeline:
                 pos2, neg2 = self._repair_flux(user_prompt, res.issues)
                 if pos2 is not None:
                     res2 = validate_pair(pos2, neg2)
-                    improved = res2.ok or len(res2.issues) < len(res.issues)
-                    if improved:
-                        log.info("Repair pass improved prompt (%d → %d issues)", len(res.issues), len(res2.issues))
+                    if res2.ok or len(res2.issues) < len(res.issues):
                         pos, neg = pos2, neg2
-                    else:
-                        log.warning("Repair pass did not improve prompt; keeping original")
-                else:
-                    log.warning("Repair pass failed entirely; keeping original")
         return [pos, neg]
 
     def _repair_flux(self, user_prompt: str, issues: list[str]) -> tuple[str | None, str | None]:
@@ -359,19 +358,9 @@ class Pipeline:
                 log.warning("Validation issues, attempting one repair pass: %s", res.issues)
                 entry2 = self._repair_sdxl(user_prompt, res.issues)
                 if entry2 is not None:
-                    # Apply mechanical fixes to repair output (BREAKs, weights)
-                    entry2 = _auto_break_and_weights(entry2)
                     res2 = validate_sdxl_pair(entry2)
-                    improved = res2.ok or len(res2.issues) < len(res.issues)
-                    if improved:
-                        log.info("Repair pass improved prompt (%d → %d issues)", len(res.issues), len(res2.issues))
+                    if res2.ok or len(res2.issues) < len(res.issues):
                         entry = entry2
-                    else:
-                        log.warning("Repair pass did not improve prompt; keeping original")
-                else:
-                    log.warning("Repair pass failed entirely; keeping original")
-        # Final mechanical safety net — always applied, always model-agnostic
-        entry = _auto_break_and_weights(entry)
         return entry
 
     def _repair_sdxl(self, user_prompt: str, issues: list[str]) -> dict | None:
@@ -496,10 +485,6 @@ class Pipeline:
                     schema_hint=self.bank.boilerplate_stripper_schema,
                 )
                 stripped = _coerce_sdxl_entry(out)
-                # Safety net: if the stripper removed everything, keep the
-                # original tag lists so prompts are never left empty.
-                if not stripped.get("positive_tags") and not stripped.get("negative_tags"):
-                    stripped = entry
                 # Preserve fields the stripper doesn't return (decision/shot_type).
                 merged = dict(entry)
                 merged.update(
@@ -542,7 +527,7 @@ class Pipeline:
                 return _SetCheckpoint.from_dict(d)
             except Exception as e:
                 log.warning("Failed to read checkpoint %s, starting fresh: %s", p, e)
-        return _SetCheckpoint(deck_idx=deck_idx, set_idx=set_idx, target=self.cfg.target)
+        return _SetCheckpoint(deck_idx=deck_idx, set_idx=set_idx, target=self.cfg.target, variant=self.cfg.variant)
 
     def _save_ckpt(self, ckpt: _SetCheckpoint) -> None:
         p = self._ckpt_path(ckpt.deck_idx, ckpt.set_idx)
@@ -590,61 +575,15 @@ def _name_match(query: str, *candidates: str | None) -> bool:
 
 
 def _as_str_list(v: Any) -> list[str]:
-    """Coerce model output into a list[str], dropping empties and "..." placeholders."""
+    """Coerce model output into a list[str], dropping empties."""
     if v is None:
         return []
     if isinstance(v, str):
-        # Strip JSON array wrapper if the model returned a stringified list.
-        s = v.strip()
-        if s.startswith("[") and s.endswith("]"):
-            try:
-                parsed = json.loads(s)
-                if isinstance(parsed, list):
-                    return [str(x).strip() for x in parsed if str(x).strip() and str(x).strip() != "..."]
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return [x.strip() for x in s.split(",") if x.strip() and x.strip() != "..."]
+        # Tolerate the model returning a comma-separated string instead of a list.
+        return [s.strip() for s in v.split(",") if s.strip()]
     if isinstance(v, list):
-        return [str(x).strip() for x in v if str(x).strip() and str(x).strip() != "..."]
+        return [str(x).strip() for x in v if str(x).strip()]
     return []
-
-
-def _auto_break_and_weights(entry: dict) -> dict:
-    """Mechanically fix BREAK positions and missing default weights.
-
-    No LLM involvement — these are purely mechanical transformations
-    that should always be applied regardless of which model produced
-    the output. This keeps the pipeline model-agnostic.
-    """
-    pos = entry.get("positive_tags") or []
-    weights = entry.get("weights") or {}
-    breaks = entry.get("breaks") or []
-
-    # --- Auto-fill default weights -------------------------------------------
-    if not weights:
-        weights = {tag: 1.0 for tag in pos}
-
-    # --- Auto-calculate BREAK positions --------------------------------------
-    # Walk the tags accumulating CLIP token estimates; insert a BREAK
-    # at the first tag index where the next tag would exceed the 75-token
-    # chunk limit.
-    if pos:
-        new_breaks: list[int] = []
-        chunk_tokens = 0
-        for idx, tag in enumerate(pos):
-            tag_tokens = estimate_clip_tokens(tag)
-            # If this tag would overflow the current chunk, BREAK before it
-            if chunk_tokens + tag_tokens > SDXL_MAX_CHUNK_TOKENS and chunk_tokens > 0:
-                new_breaks.append(idx)
-                chunk_tokens = tag_tokens
-            else:
-                chunk_tokens += tag_tokens
-        # Keep existing BREAKs only if they're valid; prefer auto-calculated
-        entry["breaks"] = new_breaks
-
-    entry["weights"] = weights
-    entry["positive_tags"] = pos
-    return entry
 
 
 def _coerce_sdxl_entry(out: dict) -> dict:
@@ -668,11 +607,11 @@ def _coerce_sdxl_entry(out: dict) -> dict:
             except (TypeError, ValueError):
                 continue
         breaks = sorted({b for b in breaks if 0 < b < len(pos)})
-    return _auto_break_and_weights({
+    return {
         "decision": str(out.get("decision", "") or ""),
         "shot_type": str(out.get("shot_type", "") or ""),
         "positive_tags": pos,
         "negative_tags": neg,
         "weights": weights,
         "breaks": breaks,
-    })
+    }

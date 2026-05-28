@@ -1,11 +1,7 @@
 """Local web UI server for prompt_forge.
 
 Pure-stdlib HTTP server that serves a single-page UI for configuring and
-running the prompt_forge pipeline.
-
-Binds to 127.0.0.1 by default. Pass ``--host 0.0.0.0`` (or a specific NIC
-IP) to expose the UI on the local network. There is no authentication —
-only enable LAN binding on networks you trust.
+running the prompt_forge pipeline. Binds to 127.0.0.1 only.
 
 Endpoints
 ---------
@@ -31,8 +27,6 @@ import logging
 import os
 import queue
 import signal
-import socket
-import ssl
 import subprocess
 import sys
 import threading
@@ -45,7 +39,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .llm_client import LLMConfig, LLMError, make_client
+from .llm_client import LLMConfig, make_client
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +57,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output": "",
     # Target
     "target": "flux",
+    "variant": "",
     # Selection
     "process_all": True,
     "hide_completed": False,
@@ -87,149 +82,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dry_run": False,
     "verbose": 1,  # 0=warn, 1=info, 2=debug
 }
-
-
-# ---------------------------------------------------------------------------
-# Security: API key authentication
-# ---------------------------------------------------------------------------
-
-def _get_api_key() -> str | None:
-    """Get the API key from environment variable. Returns None if not set."""
-    return os.environ.get("PROMPT_FORGE_API_KEY")
-
-
-def _validate_auth(handler: "BaseHTTPRequestHandler") -> bool:
-    """Check if request has valid API key. /healthz endpoint bypassed.
-    
-    If PROMPT_FORGE_API_KEY is set, all requests except /healthz must include
-    a valid Authorization header: "Authorization: Bearer {key}"
-    """
-    api_key = _get_api_key()
-    if not api_key:
-        return True  # Auth disabled if env var not set
-    
-    path = handler.path.split("?")[0]
-    if path == "/healthz":
-        return True  # Health check always allowed
-    
-    auth_header = handler.headers.get("Authorization", "")
-    expected_header = f"Bearer {api_key}"
-    
-    return auth_header == expected_header
-
-
-# ---------------------------------------------------------------------------
-# Security: Path sanitization (prevent directory traversal)
-# ---------------------------------------------------------------------------
-
-def _sanitize_path(path_input: str, base_dir: Path = _PROJECT_ROOT) -> Path:
-    """Resolve and validate a user-provided path stays within base_dir.
-    
-    Raises ValueError if path escapes base_dir or doesn't exist/is not readable.
-    Resolves symlinks to detect traversal attacks.
-    """
-    if not path_input:
-        return base_dir
-    
-    # Expand ~ and resolve to absolute path
-    target = Path(path_input).expanduser()
-    if not target.is_absolute():
-        target = base_dir / target
-    
-    # Resolve symlinks to their real path (protects against symlink escapes)
-    try:
-        real_target = target.resolve()
-        real_base = base_dir.resolve()
-    except (OSError, RuntimeError) as e:
-        raise ValueError(f"Could not resolve path: {e}") from e
-    
-    # Verify resolved path is within base directory
-    try:
-        real_target.relative_to(real_base)
-    except ValueError:
-        raise ValueError(f"Path traversal denied: {path_input}")
-    
-    return real_target
-
-
-# ---------------------------------------------------------------------------
-# Security: Logging filter (redact sensitive information)
-# ---------------------------------------------------------------------------
-
-class _SecretsFilter(logging.Filter):
-    """Redact API keys, AWS credentials, and other sensitive patterns from logs."""
-    
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = self._redact(str(record.msg))
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {k: self._redact(str(v)) for k, v in record.args.items()}
-            elif isinstance(record.args, tuple):
-                record.args = tuple(self._redact(str(v)) for v in record.args)
-        return True
-    
-    @staticmethod
-    def _redact(text: str) -> str:
-        """Redact sensitive patterns: AWS keys, API keys, tokens, bearer tokens."""
-        import re
-        # AWS Access Key ID: AKIA followed by 16 alphanumeric chars
-        text = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", text)
-        # AWS Secret Access Key: usually 40 chars of base64-like
-        text = re.sub(r"aws_secret_access_key['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9+/=]{40}['\"]?", "[REDACTED_AWS_SECRET]", text)
-        # Bearer tokens
-        text = re.sub(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [REDACTED_TOKEN]", text)
-        # API keys in headers or config (sk-, pk-, etc.)
-        text = re.sub(r"['\"]?(api[_-]?key|sk_[a-z]{3,}|pk_[a-z]{3,})['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9\-._]+['\"]?", "[REDACTED_API_KEY]", text)
-        # Generic credential patterns
-        text = re.sub(r"password['\"]?\s*[:=]\s*['\"][^\"']+['\"]", "password: [REDACTED]", text, flags=re.IGNORECASE)
-        return text
-
-
-# ---------------------------------------------------------------------------
-# Security: Input validation (DoS prevention)
-# ---------------------------------------------------------------------------
-
-def _validate_numeric_param(value: Any, name: str, min_val: int | float, max_val: int | float) -> int | float:
-    """Validate and coerce a numeric parameter to be within bounds."""
-    try:
-        num = float(value) if isinstance(value, str) else value
-        if not isinstance(num, (int, float)):
-            raise ValueError(f"{name} must be numeric")
-        if num < min_val or num > max_val:
-            raise ValueError(f"{name} must be between {min_val} and {max_val}, got {num}")
-        return int(num) if isinstance(min_val, int) else num
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Invalid {name}: {e}") from e
-
-
-def _validate_content_type(handler: "BaseHTTPRequestHandler") -> bool:
-    """Verify Content-Type header is present and is application/json for POST."""
-    if handler.command != "POST":
-        return True
-    
-    content_type = handler.headers.get("Content-Type", "").split(";")[0].strip().lower()
-    if content_type and content_type not in ("application/json", "application/json"):
-        return False
-    return True
-
-
-def _validate_json_size(handler: "BaseHTTPRequestHandler", max_bytes: int = 10_000_000) -> bool:
-    """Check Content-Length doesn't exceed max_bytes (prevent memory exhaustion)."""
-    try:
-        content_length = int(handler.headers.get("Content-Length", "0") or "0")
-        return content_length <= max_bytes
-    except ValueError:
-        return False
-
-
-def _shell_quote(s: str) -> str:
-    """Quote a string for safe shell display (not execution — just for log output)."""
-    if not s:
-        return "''"
-    if any(c in s for c in (' ', '\t', '\n', "'", '"', '$', '`', '\\')):
-        escaped = s.replace("'", "'\\''")
-        return f"'{escaped}'"
-    return s
 
 
 # ---------------------------------------------------------------------------
@@ -303,14 +155,8 @@ class RunManager:
             self.runs[run_id] = run
             self.active_id = run_id
 
-        # Create a clean environment with only whitelisted variables
-        # to prevent leaking secrets (AWS keys, API tokens, etc.) to subprocess
-        env = {}
-        for var in ("PATH", "HOME", "LANG", "TZ"):
-            if var in os.environ:
-                env[var] = os.environ[var]
-        env["PYTHONUNBUFFERED"] = "1"
-        
+        env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -330,7 +176,7 @@ class RunManager:
 
         run.proc = proc
         run.state = "running"
-        run.emit(f"$ {' '.join(_shell_quote(a) for a in cmd)}")
+        run.emit(f"$ {' '.join(cmd)}")
         threading.Thread(target=self._reader, args=(run,), daemon=True).start()
         return run
 
@@ -452,6 +298,10 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     target = cfg.get("target") or "flux"
     argv += ["--target", target]
 
+    variant = (cfg.get("variant") or "").strip()
+    if variant:
+        argv += ["--variant", variant]
+
     if cfg.get("process_all"):
         argv += ["--all"]
     else:
@@ -478,35 +328,23 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     model = (cfg.get("model") or "").strip()
     if model:
         argv += ["--model", model]
-    if provider in ("lmstudio", "gemini", "deepseek", "openai"):
+    if provider == "lmstudio":
         api_key = (cfg.get("api_key") or "").strip()
-        if api_key and api_key != "lm-studio":
+        if api_key:
             argv += ["--api-key", api_key]
-        elif provider != "lmstudio":
-            # For remote providers, default to the configured key even if it's
-            # the lm-studio placeholder — user may have set a real key.
-            argv += ["--api-key", api_key or ""]
 
     re_eff = (cfg.get("reasoning_effort") or "").strip()
     if re_eff:
         argv += ["--reasoning-effort", re_eff]
 
-    # Validate and add numeric parameters with bounds checking
     if cfg.get("timeout_s"):
-        timeout_s = _validate_numeric_param(cfg["timeout_s"], "timeout_s", 0, 3600)
-        argv += ["--timeout", str(int(timeout_s))]
-    
+        argv += ["--timeout", str(int(cfg["timeout_s"]))]
     if cfg.get("temperature") is not None and cfg.get("temperature") != "":
-        temperature = _validate_numeric_param(cfg["temperature"], "temperature", 0.0, 2.0)
-        argv += ["--temperature", str(temperature)]
-    
+        argv += ["--temperature", str(float(cfg["temperature"]))]
     if cfg.get("num_predict"):
-        num_predict = _validate_numeric_param(cfg["num_predict"], "num_predict", 1, 1_000_000)
-        argv += ["--num-predict", str(int(num_predict))]
-    
+        argv += ["--num-predict", str(int(cfg["num_predict"]))]
     if cfg.get("concurrency"):
-        concurrency = _validate_numeric_param(cfg["concurrency"], "concurrency", 1, 256)
-        argv += ["--concurrency", str(int(concurrency))]
+        argv += ["--concurrency", str(int(cfg["concurrency"]))]
 
     ckpt = (cfg.get("checkpoint_dir") or "").strip()
     if ckpt:
@@ -545,8 +383,6 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -556,20 +392,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(data)
 
     def _read_json(self) -> dict[str, Any]:
-        # Validate Content-Type for POST requests
-        if not _validate_content_type(self):
-            raise ValueError("Content-Type must be application/json")
-        
-        # Validate request size to prevent memory exhaustion
-        if not _validate_json_size(self):
-            raise ValueError("Request body too large (max 10MB)")
-        
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length == 0:
             return {}
@@ -585,11 +411,6 @@ class _Handler(BaseHTTPRequestHandler):
     # -- routing ------------------------------------------------------------
 
     def do_GET(self) -> None:  # noqa: N802
-        # Check authentication first
-        if not _validate_auth(self):
-            self._json({"error": "Unauthorized"}, 401)
-            return
-        
         u = urlparse(self.path)
         try:
             if u.path == "/" or u.path == "/index.html":
@@ -626,11 +447,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 500)
 
     def do_POST(self) -> None:  # noqa: N802
-        # Check authentication first
-        if not _validate_auth(self):
-            self._json({"error": "Unauthorized"}, 401)
-            return
-        
         u = urlparse(self.path)
         try:
             if u.path == "/api/config":
@@ -697,8 +513,6 @@ class _Handler(BaseHTTPRequestHandler):
         ok = False
         try:
             ok = client.ping()
-        except LLMError as e:
-            return {"ok": False, "error": str(e)}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "error": f"ping failed: {e}"}
         models: list[str] = []
@@ -808,11 +622,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not path:
             self._json({"error": "path is required"}, 400)
             return
-        try:
-            target = _sanitize_path(path)
-        except ValueError as e:
-            self._json({"error": str(e)}, 403)
-            return
+        target = Path(path).expanduser()
+        if not target.is_absolute():
+            target = (_PROJECT_ROOT / target).resolve()
         if not target.exists():
             self._json({"error": f"no such file: {target}"}, 404)
             return
@@ -871,14 +683,13 @@ class _Handler(BaseHTTPRequestHandler):
 
         Empty -> the package default (.forge_cache under project root).
         Relative -> resolved against the project root.
-        Validates path stays within project root.
         """
         if not checkpoint_dir:
             checkpoint_dir = ".forge_cache"
-        try:
-            return _sanitize_path(checkpoint_dir)
-        except ValueError as e:
-            raise ValueError(f"Invalid checkpoint directory: {e}") from e
+        p = Path(checkpoint_dir).expanduser()
+        if not p.is_absolute():
+            p = (_PROJECT_ROOT / p).resolve()
+        return p
 
     @staticmethod
     def _is_prompt_complete(p: Any, target: str) -> bool:
@@ -958,11 +769,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not input_path:
             self._json({"error": "input is required"}, 400)
             return
-        try:
-            in_path = _sanitize_path(input_path)
-        except ValueError as e:
-            self._json({"error": str(e)}, 403)
-            return
+        in_path = Path(input_path).expanduser()
+        if not in_path.is_absolute():
+            in_path = (_PROJECT_ROOT / in_path).resolve()
         if not in_path.exists():
             self._json({"error": f"no such file: {in_path}"}, 404)
             return
@@ -1027,10 +836,9 @@ class _Handler(BaseHTTPRequestHandler):
         target = (body.get("target") or "flux").strip().lower()
         if target not in ("flux", "sdxl"):
             raise ValueError("'target' must be 'flux' or 'sdxl'")
-        try:
-            in_path = _sanitize_path(input_path)
-        except ValueError as e:
-            raise ValueError(f"Invalid input path: {e}") from e
+        in_path = Path(input_path).expanduser()
+        if not in_path.is_absolute():
+            in_path = (_PROJECT_ROOT / in_path).resolve()
         if not in_path.exists():
             raise ValueError(f"no such file: {in_path}")
         data = json.loads(in_path.read_text("utf-8"))
@@ -1041,10 +849,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         out_path_raw = (body.get("output") or "").strip()
         if out_path_raw:
-            try:
-                out_path = _sanitize_path(out_path_raw)
-            except ValueError as e:
-                raise ValueError(f"Invalid output path: {e}") from e
+            out_path = Path(out_path_raw).expanduser()
+            if not out_path.is_absolute():
+                out_path = (_PROJECT_ROOT / out_path).resolve()
         else:
             out_path = in_path.with_name(f"{in_path.stem}.{target}.json")
 
@@ -1118,15 +925,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _browse(self, path: str) -> None:
         """Lightweight directory listing for the UI's file picker."""
-        if path:
-            try:
-                target = _sanitize_path(path)
-            except ValueError as e:
-                self._json({"error": str(e)}, 403)
-                return
-        else:
-            target = _PROJECT_ROOT
-        
+        target = Path(path).expanduser() if path else _PROJECT_ROOT
+        if not target.is_absolute():
+            target = (_PROJECT_ROOT / target).resolve()
         if not target.exists():
             self._json({"error": f"no such path: {target}"}, 404)
             return
@@ -1159,79 +960,18 @@ class _Handler(BaseHTTPRequestHandler):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _setup_https_context() -> ssl.SSLContext | None:
-    """Load HTTPS certificate and key from environment variables.
-    
-    Expects:
-    - PROMPT_FORGE_SSL_CERT: path to certificate file (PEM format)
-    - PROMPT_FORGE_SSL_KEY: path to key file (PEM format)
-    
-    Returns None if not configured (HTTP-only mode).
-    """
-    cert_path = os.environ.get("PROMPT_FORGE_SSL_CERT")
-    key_path = os.environ.get("PROMPT_FORGE_SSL_KEY")
-    
-    if not cert_path or not key_path:
-        return None
-    
-    try:
-        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(cert_path, keyfile=key_path)
-        return context
-    except FileNotFoundError as e:
-        log.warning("SSL certificate/key not found, falling back to HTTP: %s", e)
-        return None
-    except ssl.SSLError as e:
-        log.warning("Failed to load SSL certificates, falling back to HTTP: %s", e)
-        return None
-
-
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> int:
     if not _UI_DIR.exists():
         log.error("UI assets missing: %s", _UI_DIR)
         return 2
-    
-    # Setup HTTPS if certificates are configured
-    ssl_context = _setup_https_context()
-    protocol = "https" if ssl_context else "http"
-    
     httpd = ThreadingHTTPServer((host, port), _Handler)
-    if ssl_context:
-        httpd.socket = ssl_context.wrap_socket(httpd.socket, server_side=True)
-    
-    # When the user binds to a wildcard, the bind address (0.0.0.0 / ::) is
-    # not a usable URL for a browser, so derive a clickable URL using the
-    # machine's hostname and warn that there is no authentication.
-    listen_url = f"{protocol}://{host}:{port}/"
-    if host in ("0.0.0.0", "::", ""):
-        try:
-            display_host = socket.gethostname()
-        except Exception:  # noqa: BLE001
-            display_host = "localhost"
-        clickable_url = f"{protocol}://{display_host}:{port}/"
-        api_key_msg = " with API key authentication" if _get_api_key() else " with NO authentication"
-        log.warning(
-            "prompt_forge UI is binding to %s%s — anyone "
-            "who can reach this machine on the network can drive the UI and "
-            "trigger subprocesses. Only do this on a trusted network.", host, api_key_msg,
-        )
-        print(
-            f"prompt_forge UI listening on {listen_url} (open: {clickable_url})",
-            file=sys.stderr,
-        )
-        print(
-            f"WARNING: bound to a non-loopback address{api_key_msg}. "
-            "Only expose this on networks you trust.",
-            file=sys.stderr,
-        )
-    else:
-        clickable_url = listen_url
-        log.info("prompt_forge UI listening on %s", listen_url)
-        print(f"prompt_forge UI listening on {listen_url}", file=sys.stderr)
+    url = f"http://{host}:{port}/"
+    log.info("prompt_forge UI listening on %s", url)
+    print(f"prompt_forge UI listening on {url}", file=sys.stderr)
     print(f"config.json: {_CONFIG_PATH}", file=sys.stderr)
     if open_browser:
         try:
-            webbrowser.open(clickable_url)
+            webbrowser.open(url)
         except Exception:  # noqa: BLE001
             pass
     try:
@@ -1246,17 +986,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) 
 def main(argv: list[str] | None = None) -> int:
     import argparse
     p = argparse.ArgumentParser(prog="prompt_forge.ui", description="Local web UI for prompt_forge.")
-    p.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help=(
-            "Bind address (default: 127.0.0.1, loopback only). "
-            "Pass 0.0.0.0 to listen on every interface so other machines on "
-            "the LAN can connect, or a specific NIC IP to restrict to one "
-            "interface. Note: there is no authentication; only expose this "
-            "on a trusted network."
-        ),
-    )
+    p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--verbose", "-v", action="count", default=1)
@@ -1270,8 +1000,6 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Apply secrets filter to all loggers to prevent credential leakage
-    logging.getLogger().addFilter(_SecretsFilter())
     return serve(args.host, args.port, open_browser=not args.no_browser)
 
 
