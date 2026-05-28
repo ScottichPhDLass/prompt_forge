@@ -500,18 +500,26 @@ class Pipeline:
                 log.warning("Strip failed for prompt %d, keeping original: %s", i, e)
                 return i, entry
 
-        out_list: list[Any] = [None] * len(prompts)
+        total = len(prompts)
+        out_list: list[Any] = [None] * total
         worker = _do_one_flux if self.cfg.target == "flux" else _do_one_sdxl
+        _log_interval = max(1, total // 10)  # log ~10 ticks for any batch size
         if self.cfg.concurrency <= 1:
-            for i in range(len(prompts)):
+            for i in range(total):
                 _, entry = worker(i)
                 out_list[i] = entry
+                if (i + 1) % _log_interval == 0 or i == total - 1:
+                    log.info("  strip progress: %d/%d", i + 1, total)
         else:
+            done = 0
             with cf.ThreadPoolExecutor(max_workers=self.cfg.concurrency) as ex:
-                futures = {ex.submit(worker, i): i for i in range(len(prompts))}
+                futures = {ex.submit(worker, i): i for i in range(total)}
                 for fut in cf.as_completed(futures):
                     i, entry = fut.result()
                     out_list[i] = entry
+                    done += 1
+                    if done % _log_interval == 0 or done == total:
+                        log.info("  strip progress: %d/%d", done, total)
         return out_list
 
     # ---- checkpoint I/O ---------------------------------------------------
