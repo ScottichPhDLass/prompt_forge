@@ -605,7 +605,7 @@ function refreshDerived() {
   $("api_key").parentElement.style.opacity = (prov === "lmstudio" || prov === "gemini" || prov === "deepseek" || prov === "openai") ? "1" : "0.5";
   // Reasoning effort hint
   var re_hint = $("reasoning_effort").previousElementSibling;
-  if (re_hint) re_hint.textContent = "Reasoning effort " + (prov === "deepseek" ? "(DeepSeek R1)" : prov === "lmstudio" ? "(LM Studio reasoning models)" : "");
+  if (re_hint) re_hint.textContent = "Reasoning effort " + (prov === "deepseek" ? "(DeepSeek R1 / V4 Flash)" : prov === "lmstudio" ? "(LM Studio reasoning models)" : "");
 
   // Live command preview
   $("cmd-preview").textContent = previewCommand();
