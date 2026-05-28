@@ -99,8 +99,9 @@ class _SetCheckpoint:
 
 
 class Pipeline:
-    def __init__(self, client: LLMClient, cfg: PipelineConfig):
+    def __init__(self, client: LLMClient, cfg: PipelineConfig, stripper_client: LLMClient | None = None):
         self.client = client
+        self.stripper_client = stripper_client
         self.cfg = cfg
         self.bank = select_templates(cfg.target, cfg.variant)
         Path(self.cfg.checkpoint_dir).mkdir(parents=True, exist_ok=True)
@@ -449,8 +450,9 @@ class Pipeline:
                 pos=pos,
                 neg=neg,
             )
+            _client = self.stripper_client or self.client
             try:
-                out = self.client.chat_json(
+                out = _client.chat_json(
                     self.bank.boilerplate_stripper_system,
                     user,
                     schema_hint=self.bank.boilerplate_stripper_schema,
@@ -479,7 +481,8 @@ class Pipeline:
                 ),
             )
             try:
-                out = self.client.chat_json(
+                _client = self.stripper_client or self.client
+                out = _client.chat_json(
                     self.bank.boilerplate_stripper_system,
                     user,
                     schema_hint=self.bank.boilerplate_stripper_schema,

@@ -373,9 +373,47 @@
         </div>
       </div>
       </div>
-    </div>
+      </div>
 
-    <div class="card collapsible collapsed" id="advanced-card">
+      <div class="card collapsible collapsed" id="stripper-card">
+        <h2>Stripper provider <span class="hint">(optional — separate LLM for boilerplate stripping)</span></h2>
+        <div class="body">
+        <div class="grid">
+          <div class="field">
+            <label>Stripper provider</label>
+            <select id="stripper_provider">
+              <option value="">(same as main LLM)</option>
+              <option value="auto">auto (probe Ollama, then LM Studio)</option>
+              <option value="ollama">ollama</option>
+              <option value="lmstudio">lmstudio</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Stripper host URL <span class="hint">blank = provider default</span></label>
+            <input type="text" id="stripper_host" placeholder="http://egpu-server.local:1234">
+          </div>
+          <div class="field span2">
+            <label>Stripper model
+              <span class="hint">
+                <button type="button" id="list-stripper-models" style="padding:2px 6px;font-size:11px;">List models</button>
+                <button type="button" id="test-stripper-conn" style="padding:2px 6px;font-size:11px;">Test connection</button>
+              </span>
+            </label>
+            <div class="row">
+              <input type="text" id="stripper_model" placeholder="e.g. gemma-4-e4b" list="stripper-model-list">
+              <datalist id="stripper-model-list"></datalist>
+            </div>
+            <span class="status" id="stripper-conn-status">&nbsp;</span>
+          </div>
+          <div class="field">
+            <label>Stripper API key <span class="hint">LM Studio</span></label>
+            <input type="text" id="stripper_api_key" placeholder="lm-studio">
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="card collapsible collapsed" id="advanced-card">
       <h2>Advanced</h2>
       <div class="body">
         <div class="grid">
@@ -490,6 +528,7 @@ const $ = (id) => document.getElementById(id);
 const fields = [
   "input", "output", "target", "variant", "process_all", "hide_completed", "deck", "set_name",
   "provider", "host", "model", "api_key", "reasoning_effort",
+  "stripper_provider", "stripper_host", "stripper_model", "stripper_api_key",
   "timeout_s", "temperature", "num_predict", "concurrency",
   "checkpoint_dir", "recompute_boilerplate", "validate",
   "dry_run", "verbose",
@@ -908,6 +947,68 @@ async function testConnection() {
   }
 }
 
+// ---- stripper provider -----------------------------------------------------
+
+async function listStripperModels() {
+  $("stripper-conn-status").textContent = "fetching models…";
+  $("stripper-conn-status").className = "status";
+  try {
+    const r = await api("/api/list-models", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: $("stripper_provider").value || "auto",
+        host: $("stripper_host").value.trim(),
+      }),
+    });
+    if (r.error) { $("stripper-conn-status").textContent = "error: " + r.error; $("stripper-conn-status").className = "status err"; return; }
+    const dl = $("stripper-model-list");
+    dl.innerHTML = "";
+    for (const m of (r.models || [])) {
+      const o = document.createElement("option");
+      o.value = m;
+      dl.appendChild(o);
+    }
+    $("stripper-conn-status").textContent = `${r.models.length} model(s) available at ${r.host}`;
+    $("stripper-conn-status").className = "status ok";
+  } catch (e) {
+    $("stripper-conn-status").textContent = "error: " + e.message;
+    $("stripper-conn-status").className = "status err";
+  }
+}
+
+async function testStripperConnection() {
+  $("stripper-conn-status").textContent = "testing…";
+  $("stripper-conn-status").className = "status";
+  try {
+    const r = await api("/api/test-connection", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: $("stripper_provider").value || "auto",
+        host: $("stripper_host").value.trim(),
+        model: $("stripper_model").value.trim(),
+        api_key: $("stripper_api_key").value.trim(),
+      }),
+    });
+    if (r.ok) {
+      $("stripper-conn-status").textContent = `connected to ${r.provider} — ${r.models.length} model(s)`;
+      $("stripper-conn-status").className = "status ok";
+      const dl = $("stripper-model-list");
+      dl.innerHTML = "";
+      for (const m of (r.models || [])) {
+        const o = document.createElement("option");
+        o.value = m;
+        dl.appendChild(o);
+      }
+    } else {
+      $("stripper-conn-status").textContent = "no connection: " + (r.error || "ping failed");
+      $("stripper-conn-status").className = "status err";
+    }
+  } catch (e) {
+    $("stripper-conn-status").textContent = "error: " + e.message;
+    $("stripper-conn-status").className = "status err";
+  }
+}
+
 // ---- file browser ---------------------------------------------------------
 
 let browseTarget = null;
@@ -1256,6 +1357,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("list-models").onclick = listModels;
   $("test-conn").onclick = testConnection;
+  $("list-stripper-models").onclick = listStripperModels;
+  $("test-stripper-conn").onclick = testStripperConnection;
   $("output-default").onclick = () => { $("output").value = ""; refreshDerived(); };
 
   // Collapsible

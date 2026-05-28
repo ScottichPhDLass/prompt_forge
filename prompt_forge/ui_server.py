@@ -69,6 +69,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "",
     "api_key": "lm-studio",
     "reasoning_effort": "",
+    # Stripper provider (optional — separate LLM for boilerplate stripping)
+    "stripper_provider": "",
+    "stripper_host": "",
+    "stripper_model": "",
+    "stripper_api_key": "",
     # Tuning
     "timeout_s": 240,
     "temperature": 0.4,
@@ -336,6 +341,21 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     re_eff = (cfg.get("reasoning_effort") or "").strip()
     if re_eff:
         argv += ["--reasoning-effort", re_eff]
+
+    # Stripper provider (optional — separate LLM for boilerplate stripping)
+    sprov = (cfg.get("stripper_provider") or "").strip()
+    shost = (cfg.get("stripper_host") or "").strip()
+    smodel = (cfg.get("stripper_model") or "").strip()
+    if sprov:
+        argv += ["--stripper-provider", sprov]
+    if shost:
+        argv += ["--stripper-host", shost]
+    if smodel:
+        argv += ["--stripper-model", smodel]
+    if sprov == "lmstudio":
+        skey = (cfg.get("stripper_api_key") or "").strip()
+        if skey:
+            argv += ["--stripper-api-key", skey]
 
     if cfg.get("timeout_s"):
         argv += ["--timeout", str(int(cfg["timeout_s"]))]

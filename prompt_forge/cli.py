@@ -94,6 +94,16 @@ def _build_parser() -> argparse.ArgumentParser:
              "Use 'low' for batch-rewrite work to keep visible content from "
              "being starved by hidden chain-of-thought.",
     )
+
+    # Stripper provider (separate LLM for boilerplate stripping)
+    p.add_argument("--stripper-provider", choices=["auto", "ollama", "lmstudio"], default=None,
+        help="Separate LLM backend for boilerplate stripping (default: reuse main LLM).")
+    p.add_argument("--stripper-host", default=None,
+        help="Stripper LLM server URL (default: reuse main LLM).")
+    p.add_argument("--stripper-model", default=None,
+        help="Stripper model name (default: reuse main LLM).")
+    p.add_argument("--stripper-api-key", default=None,
+        help="API key for stripper provider.")
     p.add_argument("--timeout", type=int, default=None, help="Per-call timeout in seconds.")
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--num-predict", type=int, default=None, dest="num_predict",
@@ -130,7 +140,7 @@ def _load_toml(path: str | None) -> dict:
         return tomllib.load(f)
 
 
-def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, PipelineConfig]:
+def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, PipelineConfig, LLMConfig | None]:
     # The new section name is [llm]; we fall back to [ollama] for backward
     # compatibility with older configs.
     llm_cfg = toml_cfg.get("llm") or toml_cfg.get("ollama") or {}
@@ -186,7 +196,31 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
         target=target,
         variant=variant,
     )
-    return lcfg, pcfg
+
+    # Build optional stripper LLM config from CLI args or TOML's [stripper]
+    stripper_cfg = toml_cfg.get("stripper", {})
+    has_stripper_cli = (
+        args.stripper_provider or args.stripper_host
+        or args.stripper_model or args.stripper_api_key
+    )
+    has_stripper_toml = bool(stripper_cfg)
+    if has_stripper_cli or has_stripper_toml:
+        s_cfg = LLMConfig(
+            provider=args.stripper_provider or stripper_cfg.get("provider", lcfg.provider),
+            host=args.stripper_host or stripper_cfg.get("host", lcfg.host),
+            model=args.stripper_model or stripper_cfg.get("model", lcfg.model),
+            api_key=args.stripper_api_key or stripper_cfg.get("api_key", lcfg.api_key),
+            timeout_s=stripper_cfg.get("timeout_s", 60),
+            temperature=stripper_cfg.get("temperature", lcfg.temperature),
+            top_p=stripper_cfg.get("top_p", lcfg.top_p),
+            num_predict=stripper_cfg.get("num_predict", 1024),
+            max_retries=stripper_cfg.get("max_retries", 1),
+            reasoning_effort="",
+        )
+    else:
+        s_cfg = None
+
+    return lcfg, pcfg, s_cfg
 
 
 def _setup_logging(verbosity: int) -> None:
@@ -218,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     toml_cfg = _load_toml(args.config)
-    lcfg, pcfg = _merge_config(toml_cfg, args)
+    lcfg, pcfg, s_cfg = _merge_config(toml_cfg, args)
 
     in_path = Path(args.input)
     if not in_path.exists():
@@ -278,7 +312,31 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
 
-    pipeline = Pipeline(client, pcfg)
+    # Build separate stripper client if a separate LLM was configured.
+    stripper_client = None
+    if s_cfg:
+        try:
+            sc = make_client(s_cfg)
+            if sc.ping():
+                stripper_client = sc
+                print(
+                    f"Stripper provider={s_cfg.provider}, host={s_cfg.host}, model={s_cfg.model}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"warning: stripper provider at {s_cfg.host} unreachable, "
+                    f"falling back to main LLM for stripping",
+                    file=sys.stderr,
+                )
+        except Exception as e:
+            print(
+                f"warning: stripper provider init failed ({e}), "
+                f"falling back to main LLM for stripping",
+                file=sys.stderr,
+            )
+
+    pipeline = Pipeline(client, pcfg, stripper_client=stripper_client)
     out = pipeline.run(data, selection)
     # Record the target and variant at top level so downstream can branch on them.
     out["target"] = pcfg.target
