@@ -344,6 +344,9 @@
             <option value="auto">auto (probe Ollama, then LM Studio)</option>
             <option value="ollama">ollama</option>
             <option value="lmstudio">lmstudio</option>
+            <option value="gemini">gemini</option>
+            <option value="deepseek">deepseek</option>
+            <option value="openai">openai (generic / custom host)</option>
           </select>
         </div>
         <div class="field">
@@ -364,14 +367,14 @@
           <span class="status" id="conn-status">&nbsp;</span>
         </div>
         <div class="field">
-          <label>API key <span class="hint">LM Studio</span></label>
+          <label>API key <span class="hint">required for remote providers</span></label>
           <div class="pwd-wrap">
-            <input type="password" id="api_key" placeholder="lm-studio" autocomplete="off">
+            <input type="password" id="api_key" placeholder="lm-studio, or your Gemini/DeepSeek key" autocomplete="off">
             <button type="button" class="pwd-toggle" id="pwd-toggle" title="Show API key">&#x1F441;</button>
           </div>
         </div>
         <div class="field">
-          <label>Reasoning effort <span class="hint">LM Studio reasoning models</span></label>
+          <label>Reasoning effort <span class="hint">for reasoning models (R1, etc.)</span></label>
           <select id="reasoning_effort">
             <option value="">(none)</option>
             <option value="low">low</option>
@@ -598,7 +601,11 @@ function refreshDerived() {
     out.placeholder = `<input_stem>.${tgt}.json`;
   }
 
-  $("api_key").parentElement.style.opacity = ($("provider").value === "lmstudio") ? "1" : "0.5";
+  var prov = $("provider").value;
+  $("api_key").parentElement.style.opacity = (prov === "lmstudio" || prov === "gemini" || prov === "deepseek" || prov === "openai") ? "1" : "0.5";
+  // Reasoning effort hint
+  var re_hint = $("reasoning_effort").previousElementSibling;
+  if (re_hint) re_hint.textContent = "Reasoning effort " + (prov === "deepseek" ? "(DeepSeek R1)" : prov === "lmstudio" ? "(LM Studio reasoning models)" : "");
 
   // Live command preview
   $("cmd-preview").textContent = previewCommand();

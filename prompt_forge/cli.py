@@ -79,13 +79,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # Provider selection
     p.add_argument(
         "--provider",
-        choices=["auto", "ollama", "lmstudio"],
+        choices=["auto", "ollama", "lmstudio", "gemini", "deepseek", "openai"],
         default=None,
         help="LLM backend. 'auto' probes Ollama then LM Studio.",
     )
     p.add_argument("--host", default=None, help="LLM server URL (default depends on provider).")
     p.add_argument("--model", default=None, help="Model name as known to the provider.")
-    p.add_argument("--api-key", default=None, help="API key (LM Studio only; any string works).")
+    p.add_argument("--api-key", default=None, help="API key (required for Gemini/DeepSeek/OpenAI, optional for LM Studio).")
     p.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],

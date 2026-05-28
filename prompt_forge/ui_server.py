@@ -468,10 +468,14 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     model = (cfg.get("model") or "").strip()
     if model:
         argv += ["--model", model]
-    if provider == "lmstudio":
+    if provider in ("lmstudio", "gemini", "deepseek", "openai"):
         api_key = (cfg.get("api_key") or "").strip()
-        if api_key:
+        if api_key and api_key != "lm-studio":
             argv += ["--api-key", api_key]
+        elif provider != "lmstudio":
+            # For remote providers, default to the configured key even if it's
+            # the lm-studio placeholder — user may have set a real key.
+            argv += ["--api-key", api_key or ""]
 
     re_eff = (cfg.get("reasoning_effort") or "").strip()
     if re_eff:

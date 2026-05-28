@@ -1,12 +1,17 @@
 """LLM provider abstraction.
 
-Two concrete providers are supported:
+Five concrete providers are supported:
 
 - **Ollama** at ``http://host:11434/api/chat`` (Ollama-native shape, ``format=json``)
 - **LM Studio** at ``http://host:1234/v1/chat/completions`` (OpenAI-compatible
   shape, ``response_format={"type":"json_object"}``)
+- **Gemini** at ``https://generativelanguage.googleapis.com/v1beta/openai/``
+  (OpenAI-compatible, requires a real Google AI Studio API key)
+- **DeepSeek** at ``https://api.deepseek.com`` (OpenAI-compatible,
+  requires a real DeepSeek API key)
+- **openai** (generic OpenAI-compatible) at any custom ``host`` URL.
 
-Both expose the same surface to the rest of the pipeline:
+All expose the same surface to the rest of the pipeline:
 
     client.ping() -> bool
     client.list_models() -> list[str]
@@ -52,7 +57,7 @@ class LLMConfig:
     accepts an arbitrary string when its built-in OpenAI server is enabled).
     """
 
-    provider: str = "auto"            # "ollama" | "lmstudio" | "auto"
+    provider: str = "auto"            # "ollama" | "lmstudio" | "gemini" | "deepseek" | "openai" | "auto"
     host: str = ""                    # e.g. "http://127.0.0.1:11434"
     model: str = ""
     timeout_s: int = 240
@@ -68,9 +73,17 @@ class LLMConfig:
     # reasoning, leaving room for visible content.
     reasoning_effort: str = ""
 
-    # Default ports per provider, used when ``host`` is empty during auto-detect.
-    default_ports: dict[str, int] = field(
-        default_factory=lambda: {"ollama": 11434, "lmstudio": 1234}
+    # Default hosts / base URLs per provider, used when ``host`` is empty.
+    default_hosts: dict[str, str] = field(
+        default_factory=lambda: {
+            "ollama": "http://127.0.0.1:11434",
+            "lmstudio": "http://127.0.0.1:1234",
+            "lm_studio": "http://127.0.0.1:1234",
+            "lm-studio": "http://127.0.0.1:1234",
+            "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "deepseek": "https://api.deepseek.com",
+            "openai": "",
+        }
     )
 
 
@@ -550,15 +563,308 @@ def _schema_hint_to_response_format(schema_hint: str | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Gemini provider (remote API)
 # ---------------------------------------------------------------------------
 
 
-def _normalize_host(host: str, *, provider: str, default_ports: dict[str, int]) -> str:
-    """Fill in scheme/port if the user gave a partial host."""
+class GeminiClient:
+    """Talks to the Gemini API via its OpenAI-compatible ``/v1/chat/completions``.
+
+    Uses ``https://generativelanguage.googleapis.com/v1beta/openai`` by default.
+    Requires a real Google AI Studio API key passed as ``api_key``.
+    """
+
+    def __init__(self, cfg: LLMConfig):
+        self.cfg = cfg
+
+    # ---- discovery ------------------------------------------------------
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.cfg.api_key}"}
+
+    def ping(self) -> bool:
+        try:
+            _get_json(
+                f"{self.cfg.host.rstrip('/')}/v1/models",
+                timeout=10,
+                headers=self._auth_headers(),
+            )
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check your Gemini API key."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the network accessible?"
+            ) from e
+
+    def list_models(self) -> list[str]:
+        try:
+            data = _get_json(
+                f"{self.cfg.host.rstrip('/')}/v1/models",
+                timeout=15,
+                headers=self._auth_headers(),
+            )
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check your Gemini API key."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the network accessible?"
+            ) from e
+        return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+
+    # ---- main entry point ----------------------------------------------
+
+    def chat_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        schema_hint: str | None = None,
+        extra_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        prompt_user = user
+        if schema_hint:
+            prompt_user = f"{user}\n\nReturn ONLY a JSON object matching this schema:\n{schema_hint}"
+
+        response_format = _schema_hint_to_response_format(schema_hint)
+
+        def _attempt(_attempt_idx: int) -> dict[str, Any]:
+            raw = self._chat_raw(
+                system,
+                prompt_user,
+                extra_options=extra_options,
+                response_format=response_format,
+            )
+            choices = raw.get("choices") or []
+            if not choices:
+                err = raw.get("error", {}) or {}
+                if err:
+                    raise LLMError(f"Gemini error: {err.get('message') or err}")
+                raise LLMError(f"Gemini returned no choices: {str(raw)[:300]}")
+
+            choice = choices[0]
+            finish = choice.get("finish_reason", "")
+            msg = choice.get("message", {}) or {}
+            content = msg.get("content", "") or ""
+
+            if not content.strip():
+                usage = raw.get("usage", {}) or {}
+                if finish == "length":
+                    raise LLMError(
+                        f"Gemini model '{self.cfg.model}' hit max_tokens "
+                        f"({self.cfg.num_predict}) before producing content. "
+                        f"Increase num_predict."
+                    )
+                raise LLMError(
+                    f"Empty content from Gemini (finish_reason={finish!r}, usage={usage})."
+                )
+            return _parse_json_loose(content)
+
+        return _retry_loop(self.cfg, _attempt)
+
+    # ---- internal -------------------------------------------------------
+
+    def _chat_raw(
+        self,
+        system: str,
+        user: str,
+        *,
+        extra_options: dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.cfg.model,
+            "stream": False,
+            "temperature": self.cfg.temperature,
+            "top_p": self.cfg.top_p,
+            "max_tokens": self.cfg.num_predict,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        body["response_format"] = response_format or {"type": "text"}
+        if extra_options:
+            body.update(extra_options)
+        return _post_json(
+            f"{self.cfg.host.rstrip('/')}/v1/chat/completions",
+            body,
+            timeout=self.cfg.timeout_s,
+            headers=self._auth_headers(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek provider (remote API)
+# ---------------------------------------------------------------------------
+
+
+class DeepSeekClient:
+    """Talks to the DeepSeek API via its OpenAI-compatible ``/v1/chat/completions``.
+
+    Uses ``https://api.deepseek.com`` by default.
+    Requires a real DeepSeek API key passed as ``api_key``.
+    """
+
+    def __init__(self, cfg: LLMConfig):
+        self.cfg = cfg
+
+    # ---- discovery ------------------------------------------------------
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.cfg.api_key}"}
+
+    def ping(self) -> bool:
+        try:
+            _get_json(
+                f"{self.cfg.host.rstrip('/')}/v1/models",
+                timeout=10,
+                headers=self._auth_headers(),
+            )
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check your DeepSeek API key."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the network accessible?"
+            ) from e
+
+    def list_models(self) -> list[str]:
+        try:
+            data = _get_json(
+                f"{self.cfg.host.rstrip('/')}/v1/models",
+                timeout=15,
+                headers=self._auth_headers(),
+            )
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise LLMError(
+                    f"Authentication failed (HTTP {e.code}) at {self.cfg.host}. "
+                    f"Check your DeepSeek API key."
+                ) from e
+            raise LLMError(
+                f"Server returned HTTP {e.code} at {self.cfg.host}. "
+            ) from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise LLMError(
+                f"Cannot reach {self.cfg.host}. "
+                f"Is the network accessible?"
+            ) from e
+        return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+
+    # ---- main entry point ----------------------------------------------
+
+    def chat_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        schema_hint: str | None = None,
+        extra_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        prompt_user = user
+        if schema_hint:
+            prompt_user = f"{user}\n\nReturn ONLY a JSON object matching this schema:\n{schema_hint}"
+
+        response_format = _schema_hint_to_response_format(schema_hint)
+
+        def _attempt(_attempt_idx: int) -> dict[str, Any]:
+            raw = self._chat_raw(
+                system,
+                prompt_user,
+                extra_options=extra_options,
+                response_format=response_format,
+            )
+            choices = raw.get("choices") or []
+            if not choices:
+                err = raw.get("error", {}) or {}
+                if err:
+                    raise LLMError(f"DeepSeek error: {err.get('message') or err}")
+                raise LLMError(f"DeepSeek returned no choices: {str(raw)[:300]}")
+
+            choice = choices[0]
+            finish = choice.get("finish_reason", "")
+            msg = choice.get("message", {}) or {}
+            content = msg.get("content", "") or ""
+
+            if not content.strip():
+                usage = raw.get("usage", {}) or {}
+                if finish == "length":
+                    raise LLMError(
+                        f"DeepSeek model '{self.cfg.model}' hit max_tokens "
+                        f"({self.cfg.num_predict}) before producing content. "
+                        f"Increase num_predict."
+                    )
+                raise LLMError(
+                    f"Empty content from DeepSeek (finish_reason={finish!r}, usage={usage})."
+                )
+            return _parse_json_loose(content)
+
+        return _retry_loop(self.cfg, _attempt)
+
+    # ---- internal -------------------------------------------------------
+
+    def _chat_raw(
+        self,
+        system: str,
+        user: str,
+        *,
+        extra_options: dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.cfg.model,
+            "stream": False,
+            "temperature": self.cfg.temperature,
+            "top_p": self.cfg.top_p,
+            "max_tokens": self.cfg.num_predict,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        body["response_format"] = response_format or {"type": "text"}
+        if extra_options:
+            body.update(extra_options)
+        return _post_json(
+            f"{self.cfg.host.rstrip('/')}/v1/chat/completions",
+            body,
+            timeout=self.cfg.timeout_s,
+            headers=self._auth_headers(),
+        )
+
+
+def _normalize_host(host: str, *, provider: str, default_hosts: dict[str, str]) -> str:
+    """Fill in scheme/host/port if the user gave a partial or empty host."""
     if not host:
-        port = default_ports.get(provider, 11434)
-        return f"http://127.0.0.1:{port}"
+        url = default_hosts.get(provider, "")
+        if url:
+            return url.rstrip("/")
+        return "http://127.0.0.1:11434"
     if "://" not in host:
         host = "http://" + host
     return host.rstrip("/")
@@ -578,7 +884,7 @@ def make_client(cfg: LLMConfig) -> LLMClient:
         for candidate in ("ollama", "lmstudio"):
             test_cfg = LLMConfig(
                 provider=candidate,
-                host=_normalize_host(cfg.host, provider=candidate, default_ports=cfg.default_ports),
+                host=_normalize_host(cfg.host, provider=candidate, default_hosts=cfg.default_hosts),
                 model=cfg.model,
                 timeout_s=min(cfg.timeout_s, 10),
                 temperature=cfg.temperature,
@@ -586,7 +892,7 @@ def make_client(cfg: LLMConfig) -> LLMClient:
                 num_predict=cfg.num_predict,
                 max_retries=1,
                 api_key=cfg.api_key,
-                default_ports=cfg.default_ports,
+                default_hosts=cfg.default_hosts,
             )
             client = _build(candidate, test_cfg)
             try:
@@ -607,7 +913,7 @@ def make_client(cfg: LLMConfig) -> LLMClient:
             "[llm].host explicitly in your config."
         )
 
-    cfg.host = _normalize_host(cfg.host, provider=provider, default_ports=cfg.default_ports)
+    cfg.host = _normalize_host(cfg.host, provider=provider, default_hosts=cfg.default_hosts)
     return _build(provider, cfg)
 
 
@@ -616,6 +922,13 @@ def _build(provider: str, cfg: LLMConfig) -> LLMClient:
         return OllamaClient(cfg)
     if provider in ("lmstudio", "lm_studio", "lm-studio"):
         return LMStudioClient(cfg)
+    if provider == "gemini":
+        return GeminiClient(cfg)
+    if provider == "deepseek":
+        return DeepSeekClient(cfg)
+    if provider == "openai":
+        return GeminiClient(cfg)  # Generic OpenAI-compatible uses same class
     raise LLMError(
-        f"Unknown provider {provider!r}. Use 'ollama', 'lmstudio', or 'auto'."
+        f"Unknown provider {provider!r}. "
+        f"Use 'ollama', 'lmstudio', 'gemini', 'deepseek', 'openai', or 'auto'."
     )

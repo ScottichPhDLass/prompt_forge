@@ -2,18 +2,28 @@
 # All values can be overridden by CLI flags.
 
 [llm]
-# Which backend to talk to. Choices: "ollama", "lmstudio", or "auto".
+# Which backend to talk to. Choices: "ollama", "lmstudio", "gemini", "deepseek",
+# "openai", or "auto".
 # "auto" probes 127.0.0.1:11434 (Ollama) then 127.0.0.1:1234 (LM Studio)
 # and uses whichever responds first. Set explicitly if you run both.
+# For remote API providers (gemini, deepseek, openai), you MUST also set
+# api_key to a valid key.
 provider = "auto"
 
-# Server URL. Leave empty to use the provider's default
-# (http://127.0.0.1:11434 for Ollama, http://127.0.0.1:1234 for LM Studio).
+# Server URL. Leave empty to use the provider's default:
+#   ollama   -> http://127.0.0.1:11434
+#   lmstudio -> http://127.0.0.1:1234
+#   gemini   -> https://generativelanguage.googleapis.com/v1beta/openai
+#   deepseek -> https://api.deepseek.com
+#   openai   -> (must specify a host)
 host = ""
 
 # Model identifier as known to your provider:
 #   - Ollama: the tag from `ollama list`, e.g. "qwen2.5:32b-instruct"
 #   - LM Studio: the model id from "My Models", e.g. "qwen3-vl-4b-instruct"
+#   - Gemini: model name like "gemini-2.5-flash" or "gemini-2.5-pro"
+#   - DeepSeek: model name like "deepseek-chat" or "deepseek-reasoner"
+#   - openai: any model id served by your custom host
 model = "qwen2.5:32b-instruct"
 
 # Per-call request timeout in seconds. The boilerplate-extractor pass sends
@@ -44,8 +54,10 @@ max_retries = 3
 # time, so 1-2 is typical. Increase if your server has `num_parallel` > 1.
 concurrency = 2
 
-# LM Studio API key. The built-in OpenAI-compatible server doesn't validate
-# the value but does require the Authorization header. Any string works.
+# API key. Required for Gemini, DeepSeek, and generic OpenAI-compatible providers.
+# For LM Studio the built-in OpenAI-compatible server doesn't validate the value
+# but does require the Authorization header. Any non-empty string works for LM Studio.
+# Set your actual API key here for remote providers.
 api_key = "lm-studio"
 
 # Reasoning-model budget knob. Honored by LM Studio (and Ollama, on supported
