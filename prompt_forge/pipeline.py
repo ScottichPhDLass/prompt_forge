@@ -25,7 +25,7 @@ from typing import Any
 from . import templates
 from .llm_client import LLMClient, LLMError
 from .templates import Target, select_templates
-from .validator import validate_pair, validate_sdxl_pair
+from .validator import validate_pair, validate_sdxl_pair, estimate_clip_tokens, SDXL_MAX_CHUNK_TOKENS
 
 log = logging.getLogger("prompt_forge")
 
@@ -320,8 +320,14 @@ class Pipeline:
                 pos2, neg2 = self._repair_flux(user_prompt, res.issues)
                 if pos2 is not None:
                     res2 = validate_pair(pos2, neg2)
-                    if res2.ok or len(res2.issues) < len(res.issues):
+                    improved = res2.ok or len(res2.issues) < len(res.issues)
+                    if improved:
+                        log.info("Repair pass improved prompt (%d → %d issues)", len(res.issues), len(res2.issues))
                         pos, neg = pos2, neg2
+                    else:
+                        log.warning("Repair pass did not improve prompt; keeping original")
+                else:
+                    log.warning("Repair pass failed entirely; keeping original")
         return [pos, neg]
 
     def _repair_flux(self, user_prompt: str, issues: list[str]) -> tuple[str | None, str | None]:
@@ -353,9 +359,19 @@ class Pipeline:
                 log.warning("Validation issues, attempting one repair pass: %s", res.issues)
                 entry2 = self._repair_sdxl(user_prompt, res.issues)
                 if entry2 is not None:
+                    # Apply mechanical fixes to repair output (BREAKs, weights)
+                    entry2 = _auto_break_and_weights(entry2)
                     res2 = validate_sdxl_pair(entry2)
-                    if res2.ok or len(res2.issues) < len(res.issues):
+                    improved = res2.ok or len(res2.issues) < len(res.issues)
+                    if improved:
+                        log.info("Repair pass improved prompt (%d → %d issues)", len(res.issues), len(res2.issues))
                         entry = entry2
+                    else:
+                        log.warning("Repair pass did not improve prompt; keeping original")
+                else:
+                    log.warning("Repair pass failed entirely; keeping original")
+        # Final mechanical safety net — always applied, always model-agnostic
+        entry = _auto_break_and_weights(entry)
         return entry
 
     def _repair_sdxl(self, user_prompt: str, issues: list[str]) -> dict | None:
@@ -593,6 +609,44 @@ def _as_str_list(v: Any) -> list[str]:
     return []
 
 
+def _auto_break_and_weights(entry: dict) -> dict:
+    """Mechanically fix BREAK positions and missing default weights.
+
+    No LLM involvement — these are purely mechanical transformations
+    that should always be applied regardless of which model produced
+    the output. This keeps the pipeline model-agnostic.
+    """
+    pos = entry.get("positive_tags") or []
+    weights = entry.get("weights") or {}
+    breaks = entry.get("breaks") or []
+
+    # --- Auto-fill default weights -------------------------------------------
+    if not weights:
+        weights = {tag: 1.0 for tag in pos}
+
+    # --- Auto-calculate BREAK positions --------------------------------------
+    # Walk the tags accumulating CLIP token estimates; insert a BREAK
+    # at the first tag index where the next tag would exceed the 75-token
+    # chunk limit.
+    if pos:
+        new_breaks: list[int] = []
+        chunk_tokens = 0
+        for idx, tag in enumerate(pos):
+            tag_tokens = estimate_clip_tokens(tag)
+            # If this tag would overflow the current chunk, BREAK before it
+            if chunk_tokens + tag_tokens > SDXL_MAX_CHUNK_TOKENS and chunk_tokens > 0:
+                new_breaks.append(idx)
+                chunk_tokens = tag_tokens
+            else:
+                chunk_tokens += tag_tokens
+        # Keep existing BREAKs only if they're valid; prefer auto-calculated
+        entry["breaks"] = new_breaks
+
+    entry["weights"] = weights
+    entry["positive_tags"] = pos
+    return entry
+
+
 def _coerce_sdxl_entry(out: dict) -> dict:
     """Normalize a raw SDXL LLM response into the canonical entry shape."""
     pos = _as_str_list(out.get("positive_tags"))
@@ -614,11 +668,11 @@ def _coerce_sdxl_entry(out: dict) -> dict:
             except (TypeError, ValueError):
                 continue
         breaks = sorted({b for b in breaks if 0 < b < len(pos)})
-    return {
+    return _auto_break_and_weights({
         "decision": str(out.get("decision", "") or ""),
         "shot_type": str(out.get("shot_type", "") or ""),
         "positive_tags": pos,
         "negative_tags": neg,
         "weights": weights,
         "breaks": breaks,
-    }
+    })
