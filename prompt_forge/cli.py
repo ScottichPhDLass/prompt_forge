@@ -117,6 +117,24 @@ def _load_toml(path: str | None) -> dict:
         return tomllib.load(f)
 
 
+def _load_json_config() -> dict:
+    """Auto-load config.json next to the package if it exists.
+    
+    The Web UI writes config.json (JSON), while the CLI reads TOML via --config.
+    This fallback bridges the gap so CLI commands pick up settings (like API keys)
+    that were configured through the Web UI.
+    """
+    from pathlib import Path as _P
+    pkg = _P(__file__).resolve().parent
+    cfg_json = pkg.parent / "config.json"
+    if cfg_json.exists():
+        try:
+            return json.loads(cfg_json.read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
+
+
 def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, PipelineConfig]:
     # The new section name is [llm]; we fall back to [ollama] for backward
     # compatibility with older configs.
@@ -187,6 +205,25 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     toml_cfg = _load_toml(args.config)
+    # Merge Web UI settings (config.json) as a fallback so CLI picks up API keys
+    # and provider settings configured through the UI.
+    json_cfg = _load_json_config()
+    if json_cfg:
+        llm = toml_cfg.setdefault("llm", {})
+        # map flat JSON keys to [llm] section
+        _JSON_TO_LLM = {
+            "provider", "host", "model", "api_key", "reasoning_effort",
+            "timeout_s", "temperature", "num_predict", "concurrency",
+        }
+        for k in _JSON_TO_LLM:
+            if k in json_cfg and (k not in llm or not llm.get(k)):
+                llm[k] = json_cfg[k]
+        # Map pipeline keys
+        pipe = toml_cfg.setdefault("pipeline", {})
+        if "target" in json_cfg and "target" not in pipe:
+            pipe["target"] = json_cfg["target"]
+        if "checkpoint_dir" in json_cfg and "checkpoint_dir" not in pipe:
+            pipe["checkpoint_dir"] = json_cfg["checkpoint_dir"]
     lcfg, pcfg = _merge_config(toml_cfg, args)
 
     in_path = Path(args.input)
