@@ -395,7 +395,7 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "PromptForgeUI/0.3"
+    server_version = "PromptForgeUI/0.5"
 
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter logs
         log.info("%s - %s", self.address_string(), fmt % args)

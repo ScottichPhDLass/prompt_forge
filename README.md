@@ -1,233 +1,215 @@
 # prompt_forge
 
-Transforms conceptual / narrative JSON prompt decks into production-ready
-prompt pairs using a local LLM. Supports **Ollama** and **LM Studio** as
-backends, switchable via config or CLI flag. LM Studio is the right choice
-on AMD iGPUs (Radeon 780M etc.) where Ollama lacks Vulkan support.
+**v0.5.0** — Transform conceptual/narrative JSON prompt decks into production-ready
+prompt pairs using a local LLM. Supports **Ollama**, **LM Studio**, **OpenAI-compatible**
+backends, and a separate **stripper LLM** for the boilerplate-removal pass.
 
-Two diffusion targets are supported and selected with `--target`:
+Two diffusion targets:
 
-- `flux` *(default)* — long-form prose positive + comma-separated negative,
-  tuned for T5-class text encoders used by **FLUX.1, FLUX.2, Qwen-Image,
-  Z-Image** and similar. Output schema is unchanged from earlier versions:
-  every prompt becomes a `[positive_str, negative_str]` pair.
-- `sdxl` — CLIP-friendly comma-separated tag lists with explicit weights and
-  `BREAK` chunking, tuned for **Stable Diffusion XL** and its derivatives
-  (Illustrious, Pony, JuggernautXL, RealVisXL, etc.). Output is a structured
-  object per prompt so the rendered string and individual tag lists / weights
-  can both be inspected and tooled on. CLIP token budget is enforced at
-  ≤225 tokens (3 × 75-token chunks).
+- **`flux`** *(default)* — long-form prose positive + comma-separated negative,
+  tuned for T5-class text encoders (FLUX.1, FLUX.2, Qwen-Image, etc.)
+- **`sdxl`** — CLIP-friendly comma-separated tag lists with explicit weights
+  and `BREAK` chunking for SDXL and its derivatives (Illustrious, Pony,
+  JuggernautXL, RealVisXL, Perfection, Realism Engine, etc.)
 
-Implements the workflow you specified:
+Four prompt **variants** (two per target) let you match the LLM's output style
+to the checkpoint family — tag-based vs photographic for SDXL, prose vs hybrid
+for FLUX.
 
-1. **Per-prompt hybrid rewrite** — the model decides per prompt whether to
-   rewrite from scratch or just normalize, so well-formed prompts are not
-   needlessly mangled. The output positive always opens with
-   `realistic photographic <shot type> of …` and the output negative is a
-   comma-separated list with the canonical artifact / CG / illustration
-   prohibitions.
-2. **Boilerplate recompute** — after every prompt in a set is rewritten, a
-   second pass extracts terms common to ≥ ~60% of prompts into new positive
-   and negative boilerplate strings, then a third pass strips those terms
-   from each individual prompt so the per-prompt strings stay focused.
-3. **Validation + one-shot repair** — every produced pair is checked against
-   the spec (opening template, shot type, lighting/texture cues, baseline
-   negative vocabulary, no monochrome leak, no sentences in negatives). If
-   the check fails, the model gets exactly one repair attempt before the
-   pipeline accepts the result.
-4. **Resumable** — every set has a JSON checkpoint file. Re-running the same
-   command picks up exactly where it left off.
+---
 
-The deck/set/prompt **order, count, model_name, display_name, description,
-set name, set abbreviation, and set description are preserved verbatim**.
-Only `prompts` and (optionally) `boilerplate` inside the targeted set(s)
-are modified.
+## Features
 
-## Requirements
+- **Two-phase LLM pipeline** — rewrite → extract boilerplate → strip boilerplate
+- **Separate stripper provider** — point a small/fast model at a different host
+  for the strip phase (e.g. 4B on an eGPU while the main 27B on an iGPU does
+  the heavy rewriting)
+- **Four prompt variants** — `sdxl-tag`, `sdxl-photo`, `flux-prose`, `flux-hybrid`
+  with archetype-specific system prompts
+- **Dynamic extractor sample sizing** — measures the model's context window and
+  fits the boilerplate-extraction sample within it automatically, avoiding
+  `n_keep >= n_ctx` errors
+- **Validation + one-shot repair** — every prompt is structurally validated;
+  failures get exactly one LLM repair pass
+- **Resumable** — JSON checkpoints per set. Kill and restart; it picks up where
+  it left off
+- **Web UI** — full control panel with live log streaming, model listing,
+  connection testing, and cache-based partial builds
+- **Systemd integration** — `deploy/prompt-forge-ui.service` for auto-start on
+  server boot (tested on LXC/Linux)
+- **Stdlib only** — zero third-party Python dependencies
 
-- Python 3.11+
-- One of the following local LLM servers running with a chat-capable model loaded:
-  - **Ollama** at `http://127.0.0.1:11434` (default port). Use this on NVIDIA
-    GPUs or supported hardware.
-  - **LM Studio** at `http://127.0.0.1:1234` (default port) with the
-    “OpenAI-compatible local server” toggle ON. Use this on AMD iGPUs
-    (Radeon 780M etc.) via Vulkan, or on Apple Silicon.
-- No Python dependencies beyond the stdlib. A per-project virtual environment
-  is still recommended — see *First-time setup* below.
+---
 
-## Install / Run
-
-### First-time setup (virtual environment)
-
-The project has zero third-party Python dependencies, but running it inside a
-per-project virtual environment is recommended so the `python` you launch is
-always the one you tested against, regardless of what's on your global
-`PATH`. After unzipping, create the venv **once**:
+## Quick start
 
 ```bash
-cd prompt_forge                  # the unzipped project root (contains README.md)
-python3 -m venv venv             # creates ./venv/
+python3 -m venv venv
+source ./venv/bin/activate
+
+# Process a single set with auto-detected provider
+python -m prompt_forge \\
+    -i input.json -o output.json \\
+    --deck "Classic Nudes" --set "1930s Hollywood" -v
+
+# Or launch the web UI
+python -m prompt_forge --ui
 ```
 
-This writes a self-contained interpreter under `./venv/`. You only do this
-once per checkout. The `venv/` directory is local to the project and safe to
-delete and recreate at any time.
+---
 
-From then on, **activate the venv at the start of every shell session** before
-running anything in this project:
+## Web UI
 
 ```bash
-# macOS / Linux
-cd prompt_forge
-source ./venv/bin/activate       # prompt now shows (venv) ...
-
-# Windows (PowerShell)
-cd prompt_forge
-.\venv\Scripts\Activate.ps1
-
-# Windows (cmd.exe)
-cd prompt_forge
-venv\Scripts\activate.bat
+python -m prompt_forge --ui               # opens http://127.0.0.1:8765/
+python -m prompt_forge --ui --host 0.0.0.0 # LAN access (no auth — trust your network)
 ```
 
-When you're done, `deactivate` returns the shell to your normal Python.
+All CLI parameters are exposed in the browser panels:
 
-> All `python -m prompt_forge ...` commands shown below assume the venv is
-> already activated in your current shell. If you'd rather not activate, you
-> can call the venv's interpreter directly: `./venv/bin/python -m prompt_forge
-> --ui` (or `.\venv\Scripts\python.exe -m prompt_forge --ui` on Windows).
+| Card | What you can do |
+|---|---|
+| **Input/Output** | Pick files, choose target and variant |
+| **Selection** | Browse input JSON structure, filter by deck/set, hide completed |
+| **LLM provider** | Provider, host, model, API key, reasoning effort |
+| **Stripper provider** | *(optional, collapsed by default)* Separate LLM for stripping |
+| **Advanced** | Timeout, concurrency, temperature, num_predict, context_length, checkpoint dir, validate, recompute boilerplate |
 
-### Web UI (recommended for everyday use)
+Settings are persisted to `config.json` on every save and run.
 
-Launch a local browser-based control panel for picking files, tuning every CLI
-parameter, listing/testing the LLM connection, and streaming live run logs:
+---
+
+## Variants
+
+Variants map prompt archetypes to the LLM system prompt, steering output format
+and vocabulary. Each variant implies its target.
+
+| Variant | Target | Archetype | Best for |
+|---|---|---|---|
+| `sdxl-tag` | SDXL | Tag-based (booru-style) | Illustrious, Pony, CyberRealistic, danbooru-derived models |
+| `sdxl-photo` | SDXL | Photographic (descriptive phrases) | Juggernaut, Perfection Cinematic, Realism Engine, EpicRealism |
+| `flux-prose` | FLUX | Natural language prose | FLUX Dev, FLUX Schnell, Qwen-Image |
+| `flux-hybrid` | FLUX | Tag + prose mix | FLUX + RealismLoRA |
 
 ```bash
-cd prompt_forge
-source ./venv/bin/activate             # see 'First-time setup' above
-python -m prompt_forge --ui            # opens http://127.0.0.1:8765/
-# or, equivalently:
-python -m prompt_forge.ui --port 8765 --no-browser
+python -m prompt_forge --variant sdxl-photo --deck "Classic Nudes" --set "1930s" -v
 ```
 
-- All CLI parameters are exposed (basics in the main panel, the rest under
-  **Advanced**).
-- **Target** toggles FLUX vs SDXL; the default output path updates live
-  (`<input>.sdxl.json` for SDXL).
-- **List models** / **Test connection** call the configured Ollama or LM Studio
-  host directly so you can pick from a dropdown of installed models.
-- **Run** spawns the same `python -m prompt_forge …` command shown in the
-  *Equivalent CLI command* expander; output streams live with a progress bar
-  driven by the existing `[i/N] done` log lines. **Cancel** sends SIGTERM, then
-  SIGKILL after a 5-second grace period.
-- All overrides are persisted to **`./config.json`** (project root) on Save and
-  on every run, so settings survive between sessions. Delete `config.json` to
-  go back to defaults.
-- **Hide completed decks and sets** (Selection card) trims the Deck/Set
-  dropdowns to entries that still need work. Completion is determined by the
-  current checkpoint folder + target: if every prompt for a set has been
-  rewritten and the checkpoint's target matches the active run target, that
-  set is considered done. A deck is hidden only when *every* set in it is done.
-- **📦 Build output from cache** (Selection card) writes the configured
-  Output JSON immediately using whatever's already in the cache — no LLM
-  calls. Useful for spot-testing a partially processed input without waiting
-  for every set to finish. Sets that aren't in the cache (or are partial, or
-  have a target mismatch) are left as the original source data, so the output
-  is a valid "best so far" snapshot.
-- Server binds to `127.0.0.1` by default (loopback only). To open the UI to
-  other machines on your LAN, pass `--host` explicitly:
+When a variant is set, `--target` is derived automatically. Conflicting explicit
+targets raise an error.
 
-  ```bash
-  # Listen on every interface so any machine on the LAN can reach it:
-  python -m prompt_forge --ui --host 0.0.0.0 --no-browser
+---
 
-  # Or restrict to a specific NIC:
-  python -m prompt_forge --ui --host 192.168.1.42 --no-browser
-  ```
+## Stripper provider
 
-  Clients then point a browser at `http://<server-host>:8765/`. **There is no
-  authentication** — anyone who can reach the bound address can drive the UI
-  and trigger subprocesses on the server. Only enable LAN binding on a
-  network you trust. Consider a host firewall or putting the server behind
-  an authenticating reverse proxy if you need anything stronger.
-
-### Command line
+Boilerplate stripping is a simple string-subtraction task — well suited to a
+smaller, faster model on different hardware. Point it anywhere:
 
 ```bash
-cd prompt_forge
-source ./venv/bin/activate    # Windows: .\venv\Scripts\Activate.ps1
-
-# 1) Inspect what would be processed (no LLM calls):
-python -m prompt_forge \
-    -i ../film_stock_prompt_v4.json -o /tmp/out.json \
-    --deck "Photojournalism" --set "HardNoir" --dry-run -v
-
-# 2) Process a single set (recommended for review):
-python -m prompt_forge \
-    -i ../film_stock_prompt_v4.json -o ../film_stock_prompt_v4.forged.json \
-    --config config.example.toml \
-    --deck "Photojournalism" --set "HardNoir" -v
-
-# 3) Process the whole file:
-python -m prompt_forge \
-    -i ../film_stock_prompt_v4.json -o ../film_stock_prompt_v4.forged.json \
-    --config config.example.toml --all -v
+python -m prompt_forge \\
+    --provider lmstudio --host http://10.0.0.248:1234 --model huihui-qwen3.6-27b \\
+    --stripper-provider lmstudio --stripper-host http://egpu:6708 --stripper-model gemma-4-e4b \\
+    --deck "Classic Nudes" --set "1930s" -v
 ```
 
-## Configuration
+When no stripper is configured, the main LLM is used for both rewrite and strip
+— behaviour identical to v0.4.x. Unreachable stripper hosts fall back to the
+main LLM with a warning.
 
-All defaults live in `config.example.toml`. Copy it and edit, or override
-any field on the command line:
+---
 
-| TOML key                         | CLI flag                       |
-|----------------------------------|--------------------------------|
-| `llm.provider`                   | `--provider {auto,ollama,lmstudio}` |
-| `llm.host`                       | `--host`                       |
-| `llm.model`                      | `--model`                      |
-| `llm.api_key` (LM Studio only)   | `--api-key`                    |
-| `llm.timeout_s`                  | `--timeout`                    |
-| `llm.temperature`                | `--temperature`                |
-| `llm.num_predict`                | `--num-predict`                |
-| `llm.concurrency`                | `--concurrency`                |
-| `pipeline.target`                | `--target {flux,sdxl}`         |
-| `pipeline.checkpoint_dir`        | `--checkpoint-dir`             |
-| `pipeline.recompute_boilerplate` | `--no-recompute-boilerplate`   |
-| `pipeline.validate`              | `--no-validate`                |
+## CLI reference
 
-`provider = "auto"` probes Ollama first, then LM Studio, and uses whichever
-responds. Set explicitly if you run both. The legacy `[ollama]` section is
-still read for backward compatibility.
+```
+usage: python -m prompt_forge --input INPUT [options]
 
-### LM Studio quick setup
+Required:
+  --input / -i PATH       Input JSON file (decks / sets / prompts)
 
-1. In LM Studio, open the **Developer** (or **Local Server**) tab and toggle
-   the OpenAI-compatible server ON. Default port is `1234`.
-2. Load the model you want to use from **My Models**. Note its model id (e.g.
-   `qwen3-vl-4b-instruct`).
-3. Run `python tests/test_ollama_connection.py --provider lmstudio --model <id>`
-   to verify connectivity.
+Selection (pick one pattern):
+  --all                   Process every deck and set
+  --deck DECK             Deck name (case-insensitive substring match)
+  --set SET               Set name (requires --deck)
 
-The CLI requires either `--all`, or BOTH `--deck` and `--set`. `--deck` and
-`--set` accept either the exact name or the abbreviation, and substring
-matches are allowed.
+Target:
+  --target {flux,sdxl}    Diffusion target (default: flux)
+  --variant VAR           Prompt archetype (implies target)
 
-## Targets
+LLM provider:
+  --provider {auto,ollama,lmstudio,openai,gemini,deepseek}
+  --host URL              Server URL (http://...)
+  --model NAME            Model ID as known to the provider
+  --api-key KEY           For LM Studio / hosted providers
+  --reasoning-effort {low,medium,high}
+  --context-length N      Model context window in tokens (default: 8192)
 
-### FLUX target *(default)*
+Stripper provider (optional):
+  --stripper-provider {auto,ollama,lmstudio}
+  --stripper-host URL
+  --stripper-model NAME
+  --stripper-api-key KEY
 
-Every prompt becomes a `[positive_str, negative_str]` pair. The positive is
-a single cinematic paragraph that always opens with
-`realistic photographic <shot type> of …`. The negative is a comma-separated
-phrase list. The output file replaces the input in-place schema-wise — only
-`prompts` and `boilerplate` inside processed sets change.
+Tuning:
+  --timeout SEC           Per-LLM-call timeout (default: 240)
+  --temperature FLOAT     (default: 0.4)
+  --num-predict N         Max output tokens (default: 1200)
+  --concurrency N         Parallel workers (default: 2)
+
+Pipeline:
+  --checkpoint-dir PATH   (default: .forge_cache)
+  --no-recompute-boilerplate
+  --no-validate
+
+Misc:
+  --dry-run               List targets and exit (no LLM calls)
+  -v / -vv                Verbosity (info / debug)
+```
+
+---
+
+## Config file
+
+All defaults can be overridden via TOML. Example `config.toml`:
+
+```toml
+[llm]
+provider = "lmstudio"
+host = "http://10.0.0.248:1234"
+model = "huihui-qwen3.6-27b"
+context_length = 16384
+timeout_s = 3600
+temperature = 0.4
+num_predict = 4096
+concurrency = 2
+
+[stripper]
+provider = "lmstudio"
+host = "http://egpu:6708"
+model = "gemma-4-e4b"
+timeout_s = 60
+num_predict = 1024
+
+[pipeline]
+target = "sdxl"
+variant = "sdxl-tag"
+checkpoint_dir = ".forge_cache_tag"
+```
+
+---
+
+## Targets in detail
+
+### FLUX (default)
+
+Every prompt becomes a `[positive_str, negative_str]` pair. The positive is a
+single cinematic paragraph opening with `realistic photographic <shot type> of …`.
+The negative is a comma-separated phrase list.
 
 ```bash
-python -m prompt_forge \
-    -i ../film_stock_prompt_v4.json -o ../film_stock_prompt_v4.forged.json \
-    --config config.example.toml --all -v
+python -m prompt_forge -i input.json -o output.json --all -v
 ```
 
-### SDXL target
+### SDXL
 
 Every prompt becomes a structured object:
 
@@ -242,73 +224,72 @@ Every prompt becomes a structured object:
 }
 ```
 
-`boilerplate` becomes `{"positive_tags": [...], "negative_tags": [...]}`. The
-canonical rendered prompt strings are obtained at runtime by joining the
-boilerplate tag list with the per-prompt tag list, applying weights as
-`(tag:1.2)`, and inserting `BREAK` at each `breaks` index. The convenience
-helpers `prompt_forge.render_sdxl_positive` and `render_sdxl_negative` do
-this for you. Both A1111 and ComfyUI accept this syntax natively.
+Output is written to `<input_stem>.sdxl.json` by default. Boilerplate becomes
+`{"positive_tags": [...], "negative_tags": [...]}`.
 
-SDXL output is written to `<input_stem>.sdxl.json` next to the input by
-default, so the original FLUX file is left untouched. Pass `--output` to
-override.
+The validator enforces ≤ 225 CLIP tokens (3 × 75-token chunks). Auto-BREAK and
+auto-weight passes insert missing BREAKs at 75-token boundaries and fill default
+1.0 weights for unweighted tags.
 
 ```bash
-# Defaults: writes film_stock_prompt_v4.sdxl.json next to the input
-python -m prompt_forge \
-    -i ../film_stock_prompt_v4.json --all --target sdxl \
-    --config config.example.toml -v
+python -m prompt_forge -i input.json --all --target sdxl --variant sdxl-photo -v
 ```
 
-SDXL prompts cap out at 225 CLIP tokens (3 × 75). The validator estimates
-token count and triggers a repair pass on overruns, so an out-of-budget
-rewrite gets one chance to compress before being accepted.
+---
 
-**Checkpoints are target-scoped.** A `.forge_cache` produced for FLUX cannot
-be reused for SDXL — the pipeline will refuse to run rather than mix shapes.
-Use separate `--checkpoint-dir` values (e.g. `.forge_cache_flux` and
-`.forge_cache_sdxl`) when running both back-to-back.
+## Pipeline phases
 
-## Output
+For each (deck, set) pair:
 
-The output JSON is structurally identical to the input, with two
-modifications inside each processed set, and one new top-level field:
+1. **Phase 1 — Rewrite** — Every prompt is sent to the LLM with the target- and
+   variant-specific system prompt. Resumable via checkpoint.
+2. **Phase 2 — Boilerplate extract** — An evenly-spaced sample of rewritten
+   prompts is sent to the LLM to extract set-wide common terms. Sample size is
+   calculated dynamically from the model's `context_length` to avoid overflow.
+3. **Phase 3 — Boilerplate strip** — Every prompt is sent to the *stripper*
+   LLM (or the main LLM if no separate stripper is configured) to remove
+   boilerplate terms, leaving only per-scene unique content.
 
-- `prompts` becomes an array of `[positive, negative]` string pairs (FLUX)
-  or structured SDXL objects, depending on `--target`.
-- `boilerplate` is replaced with freshly extracted positive/negative content
-  if `recompute_boilerplate` is true.
-- A top-level `target` field records which target produced the file.
+All phases are logged at INFO level with progress indicators.
 
-Sets that are not selected for processing are passed through untouched.
+---
 
-## Resumability
+## Deployment
 
-Every set writes `<checkpoint_dir>/deckNN_setMM.json` after each completed
-prompt. If the process is killed mid-run, restart with the same arguments
-and rewriting continues from the last completed prompt. Delete the
-checkpoint file to force a clean re-run for that set.
+A systemd service is provided in the repository for auto-start on boot:
 
-## Files
+```bash
+cp deploy/prompt-forge-ui.service /etc/systemd/system/
+systemctl enable --now prompt-forge-ui.service
+journalctl -u prompt-forge-ui.service -f
+```
+
+The service uses the project's own venv and binds to `0.0.0.0:8765`.
+
+---
+
+## File structure
 
 ```
 prompt_forge/
 ├── README.md
 ├── config.example.toml
-├── config.json            # written by the web UI on Save / Run (gitignore-friendly)
-├── venv/                  # local virtual environment, created by `python3 -m venv venv`
+├── config.json              # written by the web UI (gitignore-friendly)
+├── deploy/
+│   └── prompt-forge-ui.service
+├── venv/                    # created by `python3 -m venv venv`
 └── prompt_forge/
-    ├── __init__.py
-    ├── __main__.py        # `python -m prompt_forge` (CLI) and `--ui` shortcut
-    ├── cli.py             # argparse, config merge, ping, dispatch
-    ├── llm_client.py      # Ollama + LM Studio clients with JSON mode + retries
-    ├── ollama_client.py   # backwards-compat shim for the old import path
-    ├── pipeline.py        # 3-phase pipeline + checkpointing, FLUX/SDXL aware
-    ├── templates.py       # FLUX and SDXL template banks + select_templates()
-    ├── validator.py       # structural checks (FLUX) + tag/budget checks (SDXL)
-    ├── ui_server.py       # local stdlib HTTP/SSE server for the web UI
+    ├── __init__.py           # version, public API exports
+    ├── __main__.py           # `python -m prompt_forge` entry point
+    ├── cli.py                # argparse, config merge, dispatch
+    ├── llm_client.py         # Ollama / LM Studio / OpenAI clients
+    ├── ollama_client.py      # backwards-compat shim
+    ├── pipeline.py           # 3-phase pipeline + checkpointing
+    ├── templates.py          # template banks + variant definitions
+    ├── validator.py          # structural / tag / budget validation
+    ├── ui_server.py          # stdlib HTTP + SSE server
     └── ui/
-        ├── __init__.py    # `python -m prompt_forge.ui`
+        ├── __init__.py
         ├── __main__.py
-        └── index.html     # single-page control panel (vanilla JS, no build step)
+        └── index.html        # single-page UI (vanilla JS)
 ```

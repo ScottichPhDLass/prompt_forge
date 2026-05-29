@@ -60,6 +60,11 @@ concurrency = 2
 # Set your actual API key here for remote providers.
 api_key = "lm-studio"
 
+# Maximum context window in tokens. Used by the boilerplate extractor to size
+# its prompt sample so it never exceeds n_ctx. Default is 8192 (LM Studio
+# default for most models). Bump to 16384+ for models that support it.
+context_length = 8192
+
 # Reasoning-model budget knob. Honored by LM Studio (and Ollama, on supported
 # models). Choices: "low", "medium", "high", or "" to leave it server-default.
 #
@@ -96,3 +101,15 @@ validate = true
 opening_template = "realistic photographic {shot_type} of"
 # Always emit full-color imagery.
 force_full_color = true
+
+#[stripper]
+# Optional separate LLM for the boilerplate strip phase. Unset = reuse [llm].
+# A small fast model on dedicated hardware (e.g. gemma-4-e4b on an eGPU) is
+# ideal — stripping is a simple string-subtraction task.
+#provider = "lmstudio"
+#host = "http://localhost:6708"
+#model = "gemma-4-e4b"
+#api_key = "lm-studio"
+#timeout_s = 60
+#num_predict = 1024
+#context_length = 8192

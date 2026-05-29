@@ -4,7 +4,7 @@
 # Define ``__version__`` BEFORE the submodule imports so children that read it
 # at import time (e.g. ``llm_client`` building its User-Agent) see the real
 # value rather than the defensive fallback.
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .llm_client import (
     LLMClient,
