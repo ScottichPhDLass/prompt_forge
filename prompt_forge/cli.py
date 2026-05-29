@@ -94,6 +94,9 @@ def _build_parser() -> argparse.ArgumentParser:
              "Use 'low' for batch-rewrite work to keep visible content from "
              "being starved by hidden chain-of-thought.",
     )
+    p.add_argument("--context-length", type=int, default=None,
+        help="Model context window in tokens (default: 8192). Used by the "
+             "boilerplate extractor to size its prompt sample.")
 
     # Stripper provider (separate LLM for boilerplate stripping)
     p.add_argument("--stripper-provider", choices=["auto", "ollama", "lmstudio"], default=None,
@@ -159,6 +162,7 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
         max_retries=llm_cfg.get("max_retries", 3),
         api_key=args.api_key or llm_cfg.get("api_key", "lm-studio"),
         reasoning_effort=args.reasoning_effort or llm_cfg.get("reasoning_effort", ""),
+        context_length=args.context_length or llm_cfg.get("context_length", 8192),
     )
     target = args.target or pipe.get("target") or llm_cfg.get("target") or ""
     variant = args.variant or pipe.get("variant", "")
@@ -216,6 +220,7 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
             num_predict=stripper_cfg.get("num_predict", 1024),
             max_retries=stripper_cfg.get("max_retries", 1),
             reasoning_effort="",
+            context_length=stripper_cfg.get("context_length", 8192),
         )
     else:
         s_cfg = None

@@ -73,6 +73,11 @@ class LLMConfig:
     # reasoning, leaving room for visible content.
     reasoning_effort: str = ""
 
+    # Model context window in tokens. Used by the boilerplate extractor to
+    # size its prompt sample so it doesn't exceed the model's n_ctx.
+    # Default 8192 matches LM Studio's default context for most models.
+    context_length: int = 8192
+
     # Default hosts / base URLs per provider, used when ``host`` is empty.
     default_hosts: dict[str, str] = field(
         default_factory=lambda: {

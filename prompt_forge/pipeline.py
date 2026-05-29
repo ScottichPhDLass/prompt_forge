@@ -391,11 +391,55 @@ class Pipeline:
         set_description: str,
         rewritten: list,
     ) -> dict:
-        # Sample evenly across the set so we get representative coverage.
-        sample = _evenly_sample(rewritten, 30)
+        # Determine how many prompts fit in the model's context window.
+        # We budget the full context minus: system prompt, schema hint,
+        # user template overhead (without prompts_json), and an output
+        # buffer of 512 tokens for the boilerplate response.
+        ctx = self.client.cfg.context_length
+        # Precompute template overhead by formatting with a minimal placeholder.
+        _dummy_json = "[]"
+        _overhead_user = self.bank.boilerplate_extractor_user.format(
+            deck_display_name=deck_label,
+            set_name=set_label,
+            set_description=set_description or "",
+            prompts_json=_dummy_json,
+        )
+        _overhead_chars = len(
+            self.bank.boilerplate_extractor_system
+        ) + len(self.bank.boilerplate_extractor_schema) + len(
+            _overhead_user.replace(_dummy_json, "")
+        )
+        _output_budget = 512  # tokens for the boilerplate response
+        _safety_pct = 0.80  # use 80% of calculated budget as safety margin
+        _char_budget = int((ctx - _output_budget) * _safety_pct * 4)
+
+        # Walk through evenly-spaced prompts until we hit the budget
+        n = len(rewritten)
+        sample_size = 0
+        stride = max(1, n // 30) if n > 30 else 1  # aim for ~30 entries
+        char_cost = _overhead_chars  # starts with fixed overhead
+        for idx in range(0, n, stride):
+            entry = rewritten[idx]
+            if self.cfg.target == "sdxl" and isinstance(entry, dict):
+                compact = {
+                    "positive_tags": entry.get("positive_tags", []),
+                    "negative_tags": entry.get("negative_tags", []),
+                }
+                entry_str = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+            elif isinstance(entry, list):
+                entry_str = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+            else:
+                entry_str = json.dumps(entry, ensure_ascii=False)
+            # +2 for comma+newline separator between entries
+            char_cost += len(entry_str) + 2
+            if char_cost > _char_budget and sample_size >= 5:
+                break
+            sample_size += 1
+
+        # Re-select the actual sample at the computed size
+        sample_idx = list(range(0, n, max(1, n // max(sample_size, 1))))[:max(sample_size, 1)]
+        sample = [rewritten[i] for i in sample_idx]
         if self.cfg.target == "sdxl":
-            # Compact each entry to just the tag lists for the extractor's
-            # benefit (weights/breaks aren't useful for finding common tags).
             sample = [
                 {
                     "positive_tags": e.get("positive_tags", []),
@@ -411,8 +455,8 @@ class Pipeline:
             prompts_json=json.dumps(sample, ensure_ascii=False, separators=(",", ":")),
         )
         log.info(
-            "  boilerplate extractor: sending %d/%d prompt entries (%d chars)",
-            len(sample), len(rewritten), len(user),
+            "  boilerplate extractor: sending %d/%d prompt entries (%d chars, ctx=%d)",
+            len(sample), len(rewritten), len(user), ctx,
         )
         out = self.client.chat_json(
             self.bank.boilerplate_extractor_system,

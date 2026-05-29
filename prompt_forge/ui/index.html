@@ -433,6 +433,10 @@
             <label>Max output tokens (num_predict)</label>
             <input type="number" id="num_predict" min="64" step="64">
           </div>
+          <div class="field">
+            <label>Context length (n_ctx) <span class="hint">tokens for boilerplate sizing</span></label>
+            <input type="number" id="context_length" min="1024" step="1024">
+          </div>
           <div class="field span2">
             <label>Checkpoint dir</label>
             <input type="text" id="checkpoint_dir" placeholder=".forge_cache">
@@ -528,6 +532,7 @@ const $ = (id) => document.getElementById(id);
 const fields = [
   "input", "output", "target", "variant", "process_all", "hide_completed", "deck", "set_name",
   "provider", "host", "model", "api_key", "reasoning_effort",
+  "context_length",
   "stripper_provider", "stripper_host", "stripper_model", "stripper_api_key",
   "timeout_s", "temperature", "num_predict", "concurrency",
   "checkpoint_dir", "recompute_boilerplate", "validate",

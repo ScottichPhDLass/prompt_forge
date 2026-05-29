@@ -69,6 +69,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "",
     "api_key": "lm-studio",
     "reasoning_effort": "",
+    "context_length": 8192,
     # Stripper provider (optional — separate LLM for boilerplate stripping)
     "stripper_provider": "",
     "stripper_host": "",
@@ -341,6 +342,10 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     re_eff = (cfg.get("reasoning_effort") or "").strip()
     if re_eff:
         argv += ["--reasoning-effort", re_eff]
+
+    ctx = cfg.get("context_length")
+    if ctx:
+        argv += ["--context-length", str(int(ctx))]
 
     # Stripper provider (optional — separate LLM for boilerplate stripping)
     sprov = (cfg.get("stripper_provider") or "").strip()
