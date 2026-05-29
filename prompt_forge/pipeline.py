@@ -634,6 +634,17 @@ def _as_str_list(v: Any) -> list[str]:
     if v is None:
         return []
     if isinstance(v, str):
+        v_stripped = v.strip()
+        # Detect JSON-encoded array: the model sometimes returns
+        # positive_tags as a string containing a JSON array literal
+        # instead of as a native JSON array. Unwrap it.
+        if v_stripped.startswith("["):
+            try:
+                parsed = json.loads(v_stripped)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except (json.JSONDecodeError, TypeError):
+                pass
         # Tolerate the model returning a comma-separated string instead of a list.
         return [s.strip() for s in v.split(",") if s.strip()]
     if isinstance(v, list):
