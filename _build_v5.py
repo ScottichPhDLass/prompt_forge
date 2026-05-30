@@ -4,7 +4,7 @@ import json, copy, sys
 from pathlib import Path
 
 V4 = Path("film_stock_prompt_v4.json")
-V5 = Path("film_stock_prompt_v5.json")
+V5 = Path("prompt_concept_library_v5.json")
 
 data = json.loads(V4.read_text("utf-8"))
 decks = data["decks"]
