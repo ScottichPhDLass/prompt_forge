@@ -50,7 +50,7 @@ source ./venv/bin/activate
 # Process a single set with auto-detected provider
 python -m prompt_forge \\
     -i input.json -o output.json \\
-    --deck "Classic Nudes" --set "1930s Hollywood" -v
+    --deck "Photojournalism" --set "HardNoir" -v
 
 # Or launch the web UI
 python -m prompt_forge --ui
@@ -92,7 +92,7 @@ and vocabulary. Each variant implies its target.
 | `flux-hybrid` | FLUX | Tag + prose mix | FLUX + RealismLoRA |
 
 ```bash
-python -m prompt_forge --variant sdxl-photo --deck "Classic Nudes" --set "1930s" -v
+python -m prompt_forge --variant sdxl-photo --deck "Photojournalism" --set "HardNoir" -v
 ```
 
 When a variant is set, `--target` is derived automatically. Conflicting explicit
@@ -108,8 +108,8 @@ smaller, faster model on different hardware. Point it anywhere:
 ```bash
 python -m prompt_forge \\
     --provider lmstudio --host http://10.0.0.248:1234 --model huihui-qwen3.6-27b \\
-    --stripper-provider lmstudio --stripper-host http://egpu:6708 --stripper-model gemma-4-e4b \\
-    --deck "Classic Nudes" --set "1930s" -v
+    --stripper-provider lmstudio --stripper-host http://egpu:1234 --stripper-model gemma-4-e4b \\
+    --deck "Photojournalism" --set "HardNoir" -v
 ```
 
 When no stripper is configured, the main LLM is used for both rewrite and strip
@@ -128,8 +128,8 @@ Required:
 
 Selection (pick one pattern):
   --all                   Process every deck and set
-  --deck DECK             Deck name (case-insensitive substring match)
-  --set SET               Set name (requires --deck)
+  --deck DECK             Deck display name or model name (case-insensitive substring match)
+  --set SET               Set name or abbreviation (requires --deck, case-insensitive)
 
 Target:
   --target {flux,sdxl}    Diffusion target (default: flux)
@@ -184,7 +184,7 @@ concurrency = 2
 
 [stripper]
 provider = "lmstudio"
-host = "http://egpu:6708"
+host = "http://egpu:1234"
 model = "gemma-4-e4b"
 timeout_s = 60
 num_predict = 1024

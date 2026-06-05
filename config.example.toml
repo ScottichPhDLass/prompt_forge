@@ -107,7 +107,7 @@ force_full_color = true
 # A small fast model on dedicated hardware (e.g. gemma-4-e4b on an eGPU) is
 # ideal — stripping is a simple string-subtraction task.
 #provider = "lmstudio"
-#host = "http://localhost:6708"
+#host = "http://localhost:1234"
 #model = "gemma-4-e4b"
 #api_key = "lm-studio"
 #timeout_s = 60
