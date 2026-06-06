@@ -107,7 +107,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Stripper model name (default: reuse main LLM).")
     p.add_argument("--stripper-api-key", default=None,
         help="API key for stripper provider.")
-    p.add_argument("--timeout", type=int, default=None, help="Per-call timeout in seconds.")
+    p.add_argument("--timeout", type=int, default=None, help="Per-call timeout in seconds for the main LLM.")
+    p.add_argument("--stripper-timeout", type=int, default=None, help="Per-call timeout in seconds for the stripper LLM (default: same as main LLM timeout).")
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--num-predict", type=int, default=None, dest="num_predict",
                    help="Max output tokens (Ollama num_predict / LM Studio max_tokens).")
@@ -214,7 +215,7 @@ def _merge_config(toml_cfg: dict, args: argparse.Namespace) -> tuple[LLMConfig, 
             host=args.stripper_host or stripper_cfg.get("host", lcfg.host),
             model=args.stripper_model or stripper_cfg.get("model", lcfg.model),
             api_key=args.stripper_api_key or stripper_cfg.get("api_key", lcfg.api_key),
-            timeout_s=stripper_cfg.get("timeout_s", 60),
+            timeout_s=args.stripper_timeout or stripper_cfg.get("timeout_s", lcfg.timeout_s),
             temperature=stripper_cfg.get("temperature", lcfg.temperature),
             top_p=stripper_cfg.get("top_p", lcfg.top_p),
             num_predict=stripper_cfg.get("num_predict", 1024),

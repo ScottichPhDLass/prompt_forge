@@ -75,6 +75,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stripper_host": "",
     "stripper_model": "",
     "stripper_api_key": "",
+    "stripper_timeout_s": "",
     # Tuning
     "timeout_s": 240,
     "temperature": 0.4,
@@ -361,6 +362,9 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
         skey = (cfg.get("stripper_api_key") or "").strip()
         if skey:
             argv += ["--stripper-api-key", skey]
+    strip_t = cfg.get("stripper_timeout_s")
+    if strip_t not in (None, "", 0):
+        argv += ["--stripper-timeout", str(int(strip_t))]
 
     if cfg.get("timeout_s"):
         argv += ["--timeout", str(int(cfg["timeout_s"]))]
