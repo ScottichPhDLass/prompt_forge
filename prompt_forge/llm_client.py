@@ -647,14 +647,14 @@ class GeminiClient:
         if schema_hint:
             prompt_user = f"{user}\n\nReturn ONLY a JSON object matching this schema:\n{schema_hint}"
 
-        response_format = _schema_hint_to_response_format(schema_hint)
-
         def _attempt(_attempt_idx: int) -> dict[str, Any]:
             raw = self._chat_raw(
                 system,
                 prompt_user,
                 extra_options=extra_options,
-                response_format=response_format,
+                # Gemini doesn't support json_schema response_format;
+                # schema_hint is enforced via system prompt only.
+                response_format=None,
             )
             choices = raw.get("choices") or []
             if not choices:
@@ -795,14 +795,14 @@ class DeepSeekClient:
         if schema_hint:
             prompt_user = f"{user}\n\nReturn ONLY a JSON object matching this schema:\n{schema_hint}"
 
-        response_format = _schema_hint_to_response_format(schema_hint)
-
         def _attempt(_attempt_idx: int) -> dict[str, Any]:
             raw = self._chat_raw(
                 system,
                 prompt_user,
                 extra_options=extra_options,
-                response_format=response_format,
+                # DeepSeek doesn't support json_schema response_format;
+                # schema_hint is enforced via system prompt only.
+                response_format=None,
             )
             choices = raw.get("choices") or []
             if not choices:
