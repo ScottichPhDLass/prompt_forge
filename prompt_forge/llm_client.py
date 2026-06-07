@@ -87,7 +87,7 @@ class LLMConfig:
             "lm-studio": "http://127.0.0.1:1234",
             "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
             "deepseek": "https://api.deepseek.com",
-            "openai": "",
+            "openai": "",  # user must supply host URL for generic OpenAI-compatible endpoints
         }
     )
 

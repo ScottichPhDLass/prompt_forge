@@ -339,6 +339,10 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
         api_key = (cfg.get("api_key") or "").strip()
         if api_key:
             argv += ["--api-key", api_key]
+    elif provider in ("openai", "gemini", "deepseek"):
+        api_key = (cfg.get("api_key") or "").strip()
+        if api_key:
+            argv += ["--api-key", api_key]
 
     re_eff = (cfg.get("reasoning_effort") or "").strip()
     if re_eff:
@@ -359,6 +363,10 @@ def build_argv(cfg: dict[str, Any]) -> tuple[list[str], list[str]]:
     if smodel:
         argv += ["--stripper-model", smodel]
     if sprov == "lmstudio":
+        skey = (cfg.get("stripper_api_key") or "").strip()
+        if skey:
+            argv += ["--stripper-api-key", skey]
+    elif sprov in ("openai", "gemini", "deepseek"):
         skey = (cfg.get("stripper_api_key") or "").strip()
         if skey:
             argv += ["--stripper-api-key", skey]
@@ -519,7 +527,13 @@ class _Handler(BaseHTTPRequestHandler):
         provider = (body.get("provider") or "auto").strip()
         host = (body.get("host") or "").strip()
         model = (body.get("model") or "").strip()
-        api_key = (body.get("api_key") or "lm-studio").strip()
+        raw_key = (body.get("api_key") or "").strip()
+        # Only fall back to default key for LM Studio (which accepts any string).
+        # Remote API providers and auto-detect require an explicit key.
+        if not raw_key and provider in ("lmstudio", "lm_studio", "lm-studio"):
+            api_key = "lm-studio"
+        else:
+            api_key = raw_key
         return LLMConfig(
             provider=provider,
             host=host,

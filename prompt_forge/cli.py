@@ -79,13 +79,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # Provider selection
     p.add_argument(
         "--provider",
-        choices=["auto", "ollama", "lmstudio"],
+        choices=["auto", "ollama", "lmstudio", "openai", "gemini", "deepseek"],
         default=None,
         help="LLM backend. 'auto' probes Ollama then LM Studio.",
     )
     p.add_argument("--host", default=None, help="LLM server URL (default depends on provider).")
     p.add_argument("--model", default=None, help="Model name as known to the provider.")
-    p.add_argument("--api-key", default=None, help="API key (LM Studio only; any string works).")
+    p.add_argument("--api-key", default=None, help="API key (required for remote API providers: openai, gemini, deepseek; optional for lmstudio).")
     p.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
@@ -99,7 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "boilerplate extractor to size its prompt sample.")
 
     # Stripper provider (separate LLM for boilerplate stripping)
-    p.add_argument("--stripper-provider", choices=["auto", "ollama", "lmstudio"], default=None,
+    p.add_argument("--stripper-provider", choices=["auto", "ollama", "lmstudio", "openai", "gemini", "deepseek"], default=None,
         help="Separate LLM backend for boilerplate stripping (default: reuse main LLM).")
     p.add_argument("--stripper-host", default=None,
         help="Stripper LLM server URL (default: reuse main LLM).")
